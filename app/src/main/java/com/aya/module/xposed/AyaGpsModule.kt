@@ -2,8 +2,7 @@ package com.aya.module.xposed
 
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
-import io.github.libxposed.api.XposedModuleInterface.ModulePackageInfo
-import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
+import io.github.libxposed.api.XposedModuleInterface
 
 /**
  * Entry point Xposed (Modern API).
@@ -13,15 +12,15 @@ import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
  */
 class AyaGpsModule(
     base: XposedInterface,
-    info: ModulePackageInfo
-) : XposedModule(base, info) {
+    param: XposedModule.ModuleLoadedParam
+) : XposedModule(base, param) {
 
     init {
         log("AyaGps: module loaded (Modern API)")
     }
 
     /** Dipanggil saat proses aplikasi target selesai load package-nya */
-    override fun onPackageLoaded(param: PackageLoadedParam) {
+    override fun onPackageLoaded(param: XposedModuleInterface.PackageLoadedParam) {
         super.onPackageLoaded(param)
         log("AyaGps: injected into ${param.packageName}")
     }
