@@ -22,57 +22,26 @@ class MapViewModel(
 
     private var trackingJob: Job? = null
 
-    /** Satu pintu masuk untuk semua intent (pola MVI) */
     fun onIntent(intent: MapIntent) {
         when (intent) {
-            MapIntent.PermissionGranted -> onPermissionGranted()
+            MapIntent.PermissionGranted -> {
+                _state.update { it.copy(hasPermission = true) }
+                startTracking()
+            }
             MapIntent.PermissionDenied -> _state.update { it.copy(hasPermission = false) }
-            MapIntent.StartTracking -> startTracking()
-            MapIntent.StopTracking -> stopTracking()
-            is MapIntent.LocationReceived -> _state.update {
-                it.copy(location = intent.location, isLoading = false, error = null)
-            }
-            is MapIntent.ShowError -> _state.update {
-                it.copy(error = intent.message, isLoading = false)
-            }
         }
-    }
-
-    private fun onPermissionGranted() {
-        _state.update { it.copy(hasPermission = true) }
-        loadLastKnownLocation()
     }
 
     private fun startTracking() {
-        if (_state.value.isTracking) return
         trackingJob?.cancel()
-        _state.update { it.copy(isTracking = true, isLoading = true) }
         trackingJob = viewModelScope.launch {
-            getLocationUpdates()
-                .catch { e ->
-                    onIntent(MapIntent.ShowError(e.message ?: "Gagal melacak lokasi"))
-                }
-                .collect { onIntent(MapIntent.LocationReceived(it)) }
-        }
-    }
-
-    private fun stopTracking() {
-        trackingJob?.cancel()
-        trackingJob = null
-        _state.update { it.copy(isTracking = false, isLoading = false) }
-    }
-
-    private fun loadLastKnownLocation() {
-        viewModelScope.launch {
-            try {
-                getCurrentLocation()?.let { loc ->
-                    _state.update { it.copy(location = loc) }
-                }
-            } catch (_: SecurityException) {
-                // izin belum tersedia
-            } catch (e: Exception) {
-                _state.update { it.copy(error = e.message) }
+            // Langsung tampilkan posisi terakhir (kalau ada), lalu ikuti update real-time
+            getCurrentLocation()?.let { last ->
+                _state.update { it.copy(location = last) }
             }
+            getLocationUpdates()
+                .catch { /* diam saja — tampilkan apa yang sudah ada */ }
+                .collect { loc -> _state.update { it.copy(location = loc) } }
         }
     }
 
