@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -164,6 +165,9 @@ private fun MapContent(
     /** Titik tengah peta = posisi pin */
     val center: LatLng = cameraPositionState.position.target
 
+    /** Status tampil/sembunyi chip koordinat pin (tersimpan saat rotasi) */
+    var isPinChipVisible by rememberSaveable { mutableStateOf(true) }
+
     Box(modifier = Modifier.fillMaxSize()) {
 
         GoogleMap(
@@ -179,9 +183,7 @@ private fun MapContent(
                 mapToolbarEnabled = false
             )
         ) {
-            // Marker A — muncul saat play, hilang saat stop.
-            // MarkerComposable: konten digambar Compose, TIDAK pakai BitmapDescriptorFactory
-            // (yang menyebabkan crash saat dipanggil sebelum map siap).
+            // Marker A — muncul saat play, hilang saat stop
             pointA?.let { p ->
                 MarkerComposable(
                     state = MarkerState(position = LatLng(p.latitude, p.longitude)),
@@ -223,49 +225,72 @@ private fun MapContent(
                 .offset(y = (-24).dp)
         )
 
-        // ---- KOLOM CHIP (kiri atas): koordinat tengah + chip A + chip B ----
+        // ---- KOLOM CHIP (TENGAH ATAS): chip pin + chip A + chip B ----
         Column(
             modifier = Modifier
-                .align(Alignment.TopStart)
+                .align(Alignment.TopCenter)
                 .statusBarsPadding()
                 .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Chip koordinat titik tengah peta (selalu tampil)
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp,
-                shadowElevation = 6.dp
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+
+            if (isPinChipVisible) {
+                // Chip koordinat pin — TAP untuk sembunyikan
+                Surface(
+                    onClick = { isPinChipVisible = false },
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 3.dp,
+                    shadowElevation = 6.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.MyLocation,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = String.format(
+                                Locale.US, "%.6f, %.6f", center.latitude, center.longitude
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            } else {
+                // Chip tersembunyi — tersisa ikon mata tertutup, TAP untuk tampilkan lagi
+                Surface(
+                    onClick = { isPinChipVisible = true },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 3.dp,
+                    shadowElevation = 6.dp
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.MyLocation,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = String.format(
-                            Locale.US, "%.6f, %.6f", center.latitude, center.longitude
-                        ),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.SemiBold
+                        imageVector = Icons.Filled.VisibilityOff,
+                        contentDescription = "Tampilkan koordinat pin",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(10.dp)
+                            .size(20.dp)
                     )
                 }
             }
 
-            // Chip titik A — tampil hanya saat A aktif
+            // Chip titik A — tampil hanya saat A aktif (tidak bisa di-hide)
             if (isActiveA) {
                 PointChip(label = "A", accent = TrackAColor, location = pointA)
             }
 
-            // Chip titik B — tampil hanya saat B aktif
+            // Chip titik B — tampil hanya saat B aktif (tidak bisa di-hide)
             if (isActiveB) {
                 PointChip(label = "B", accent = TrackBColor, location = pointB)
             }
