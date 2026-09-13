@@ -17,6 +17,21 @@
             android:name="com.google.android.geo.API_KEY"
             android:value="${MAPS_API_KEY}" />
 
+        <!-- ====== Xposed / LSPosed Modern API ====== -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="AyaGps - Pin, Favorite &amp; Jitter" />
+        <!-- >= 100 = Modern API; LSPosed yang support API 102 otomatis mengenali modul ini -->
+        <meta-data
+            android:name="xposedminversion"
+            android:value="100" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
