@@ -68,14 +68,15 @@ import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.aya.module.AyaGpsApp
 import com.aya.module.domain.model.LocationData
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Polyline
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -102,11 +103,13 @@ private val OffsetSaver = listSaver<Offset, Float>(
 @Composable
 fun MapScreen() {
     val context = LocalContext.current
-    val app = context.applicationContext as AyaGpsApp
-    val viewModel: MapViewModel = viewModel {
-        MapViewModel(getLocationUpdates = app.container.getLocationUpdates)
-    }
+    val viewModel: MapViewModel = viewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // Kamera di-hoist ke sini agar koordinat pin bisa dibaca saat tombol di-tap
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(DEFAULT_POSITION, 16f)
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -122,22 +125,27 @@ fun MapScreen() {
         else permissionLauncher.launch(PERMISSIONS)
     }
 
+    /** Ambil koordinat pin tengah SAAT tombol ditekan (snapshot) */
+    val currentPin: () -> LocationData = {
+        val target = cameraPositionState.position.target
+        LocationData(latitude = target.latitude, longitude = target.longitude)
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         MapContent(
             hasPermission = state.hasPermission,
-            isTrackingA = state.isTrackingA,
-            isTrackingB = state.isTrackingB,
-            lastA = state.trackA.lastOrNull(),
-            lastB = state.trackB.lastOrNull(),
-            trackA = state.trackA,
-            trackB = state.trackB
+            cameraPositionState = cameraPositionState,
+            pointA = state.pointA,
+            pointB = state.pointB,
+            isActiveA = state.isActiveA,
+            isActiveB = state.isActiveB
         )
 
         DraggableControlPanel(
-            isTrackingA = state.isTrackingA,
-            isTrackingB = state.isTrackingB,
-            onToggleA = { viewModel.onIntent(MapIntent.ToggleTrackingA) },
-            onToggleB = { viewModel.onIntent(MapIntent.ToggleTrackingB) },
+            isActiveA = state.isActiveA,
+            isActiveB = state.isActiveB,
+            onToggleA = { viewModel.onIntent(MapIntent.ToggleA(currentPin())) },
+            onToggleB = { viewModel.onIntent(MapIntent.ToggleB(currentPin())) },
             modifier = Modifier.zIndex(2f)
         )
     }
@@ -148,22 +156,22 @@ fun MapScreen() {
 @Composable
 private fun MapContent(
     hasPermission: Boolean,
-    isTrackingA: Boolean,
-    isTrackingB: Boolean,
-    lastA: LocationData?,
-    lastB: LocationData?,
-    trackA: List<LocationData>,
-    trackB: List<LocationData>
+    cameraPositionState: com.google.maps.android.compose.CameraPositionState,
+    pointA: LocationData?,
+    pointB: LocationData?,
+    isActiveA: Boolean,
+    isActiveB: Boolean
 ) {
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(DEFAULT_POSITION, 16f)
-    }
-
     /** Titik tengah peta = posisi pin */
     val center: LatLng = cameraPositionState.position.target
 
-    val pointsA = remember(trackA) { trackA.map { LatLng(it.latitude, it.longitude) } }
-    val pointsB = remember(trackB) { trackB.map { LatLng(it.latitude, it.longitude) } }
+    // Ikon marker di-cache (tidak dibuat ulang tiap recompose)
+    val markerAIcon = remember {
+        BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
+    }
+    val markerBIcon = remember {
+        BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_ORANGE)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
 
@@ -180,8 +188,23 @@ private fun MapContent(
                 mapToolbarEnabled = false
             )
         ) {
-            if (pointsA.size >= 2) Polyline(points = pointsA, color = TrackAColor, width = 6f)
-            if (pointsB.size >= 2) Polyline(points = pointsB, color = TrackBColor, width = 6f)
+            // Marker A — muncul saat play, hilang saat stop
+            pointA?.let { p ->
+                Marker(
+                    state = MarkerState(position = LatLng(p.latitude, p.longitude)),
+                    title = "Titik A",
+                    icon = markerAIcon
+                )
+            }
+
+            // Marker B — muncul saat play, hilang saat stop
+            pointB?.let { p ->
+                Marker(
+                    state = MarkerState(position = LatLng(p.latitude, p.longitude)),
+                    title = "Titik B",
+                    icon = markerBIcon
+                )
+            }
         }
 
         // ---- PIN TETAP DI TENGAH ----
@@ -203,7 +226,7 @@ private fun MapContent(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Chip koordinat titik tengah peta
+            // Chip koordinat titik tengah peta (selalu tampil)
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -232,39 +255,38 @@ private fun MapContent(
                 }
             }
 
-            // Chip rekaman A — tampil hanya saat merekam
-            if (isTrackingA) {
-                TrackingChip(label = "A", accent = TrackAColor, location = lastA)
+            // Chip titik A — tampil hanya saat A aktif
+            if (isActiveA) {
+                PointChip(label = "A", accent = TrackAColor, location = pointA)
             }
 
-            // Chip rekaman B — tampil hanya saat merekam
-            if (isTrackingB) {
-                TrackingChip(label = "B", accent = TrackBColor, location = lastB)
+            // Chip titik B — tampil hanya saat B aktif
+            if (isActiveB) {
+                PointChip(label = "B", accent = TrackBColor, location = pointB)
             }
         }
     }
 }
 
 /**
- * Chip rekaman: titik merah berkedip + badge huruf + koordinat terakhir yang direkam.
- * Otomatis hilang saat tracking dihentikan (dikontrol lewat if (isTracking...) di pemanggil).
+ * Chip titik: indikator berkedip + badge huruf + koordinat titik yang ditandai pin.
+ * Hilang otomatis saat tombol di-stop (dikontrol if (isActive...) di pemanggil).
  */
 @Composable
-private fun TrackingChip(
+private fun PointChip(
     label: String,
     accent: Color,
     location: LocationData?
 ) {
-    // Kedipan titik rekam
-    val recTransition = rememberInfiniteTransition(label = "rec")
-    val recAlpha by recTransition.animateFloat(
+    val blinkTransition = rememberInfiniteTransition(label = "blink")
+    val blinkAlpha by blinkTransition.animateFloat(
         initialValue = 1f,
         targetValue = 0.15f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 600, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "recAlpha"
+        label = "blinkAlpha"
     )
 
     Surface(
@@ -279,8 +301,8 @@ private fun TrackingChip(
         ) {
             Icon(
                 imageVector = Icons.Filled.FiberManualRecord,
-                contentDescription = "Sedang merekam",
-                tint = PinRed.copy(alpha = recAlpha),
+                contentDescription = "Titik aktif",
+                tint = accent.copy(alpha = blinkAlpha),
                 modifier = Modifier.size(10.dp)
             )
             Spacer(Modifier.width(6.dp))
@@ -301,7 +323,7 @@ private fun TrackingChip(
             Text(
                 text = location?.let {
                     String.format(Locale.US, "%.6f, %.6f", it.latitude, it.longitude)
-                } ?: "Menunggu GPS…",
+                } ?: "-",
                 style = MaterialTheme.typography.labelMedium,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.SemiBold
@@ -314,8 +336,8 @@ private fun TrackingChip(
 
 @Composable
 private fun DraggableControlPanel(
-    isTrackingA: Boolean,
-    isTrackingB: Boolean,
+    isActiveA: Boolean,
+    isActiveB: Boolean,
     onToggleA: () -> Unit,
     onToggleB: () -> Unit,
     modifier: Modifier = Modifier
@@ -331,7 +353,6 @@ private fun DraggableControlPanel(
         val screenH = constraints.maxHeight.toFloat()
         val bottomPadPx = with(density) { PanelBottomPadding.toPx() }
 
-        // Nilai terbaru agar akurat di dalam gesture lambda
         val currentScreenW by rememberUpdatedState(screenW)
         val currentScreenH by rememberUpdatedState(screenH)
         val currentPanelSize by rememberUpdatedState(panelSize)
@@ -351,9 +372,9 @@ private fun DraggableControlPanel(
 
         Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)          // posisi awal: bawah-tengah
+                .align(Alignment.BottomCenter)
                 .padding(bottom = PanelBottomPadding)
-                .onSizeChanged { panelSize = it }        // ukuran hanya untuk clamp
+                .onSizeChanged { panelSize = it }
                 .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
                 .shakeIfUnlocked(!isLocked)
                 .then(
@@ -380,8 +401,8 @@ private fun DraggableControlPanel(
             PanelContent(
                 isLocked = isLocked,
                 isDragging = isDragging,
-                isTrackingA = isTrackingA,
-                isTrackingB = isTrackingB,
+                isActiveA = isActiveA,
+                isActiveB = isActiveB,
                 onToggleLock = { isLocked = !isLocked },
                 onToggleA = onToggleA,
                 onToggleB = onToggleB
@@ -394,8 +415,8 @@ private fun DraggableControlPanel(
 private fun PanelContent(
     isLocked: Boolean,
     isDragging: Boolean,
-    isTrackingA: Boolean,
-    isTrackingB: Boolean,
+    isActiveA: Boolean,
+    isActiveB: Boolean,
     onToggleLock: () -> Unit,
     onToggleA: () -> Unit,
     onToggleB: () -> Unit
@@ -414,7 +435,7 @@ private fun PanelContent(
             modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            TrackButton("A", isTrackingA, onToggleA)
+            TrackButton("A", isActiveA, onToggleA)
             HorizontalDivider(
                 modifier = Modifier
                     .width(36.dp)
@@ -428,26 +449,26 @@ private fun PanelContent(
                     .padding(vertical = 6.dp),
                 color = MaterialTheme.colorScheme.outlineVariant
             )
-            TrackButton("B", isTrackingB, onToggleB)
+            TrackButton("B", isActiveB, onToggleB)
         }
     }
 }
 
 @Composable
-private fun TrackButton(label: String, isTracking: Boolean, onClick: () -> Unit) {
+private fun TrackButton(label: String, isActive: Boolean, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(52.dp)) {
         Surface(
             onClick = onClick,
             shape = CircleShape,
-            color = if (isTracking) MaterialTheme.colorScheme.errorContainer
+            color = if (isActive) MaterialTheme.colorScheme.errorContainer
             else MaterialTheme.colorScheme.primaryContainer,
             modifier = Modifier.size(44.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = if (isTracking) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                    imageVector = if (isActive) Icons.Filled.Stop else Icons.Filled.PlayArrow,
                     contentDescription = "Tombol $label",
-                    tint = if (isTracking) MaterialTheme.colorScheme.onErrorContainer
+                    tint = if (isActive) MaterialTheme.colorScheme.onErrorContainer
                     else MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
@@ -455,7 +476,7 @@ private fun TrackButton(label: String, isTracking: Boolean, onClick: () -> Unit)
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = if (isTracking) MaterialTheme.colorScheme.error
+            color = if (isActive) MaterialTheme.colorScheme.error
             else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
