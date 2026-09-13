@@ -1,5 +1,7 @@
 package com.aya.module.presentation.map
 
+import com.aya.module.domain.model.FavoritePoint
+import com.aya.module.domain.model.JitterConfig
 import com.aya.module.domain.model.LocationData
 import com.aya.module.domain.model.PanelOffset
 import com.aya.module.domain.model.SavedCameraState
@@ -7,12 +9,12 @@ import com.aya.module.domain.model.SavedCameraState
 /** Zoom saat auto-focus ke posisi GPS user */
 const val FOCUS_ZOOM = 17f
 
+/** Target jitter */
+enum class JitterTarget { A, B }
+
 /** Perintah kamera satu-shot dari ViewModel ke UI */
 sealed interface MapCameraEvent {
-    /**
-     * Terbang ke lokasi target.
-     * zoom null = pertahankan zoom saat ini (dipakai saat lompat ke marker A/B).
-     */
+    /** Terbang ke lokasi target. zoom null = pertahankan zoom saat ini. */
     data class FlyTo(
         val location: LocationData,
         val zoom: Float? = null
@@ -23,9 +25,16 @@ sealed interface MapCameraEvent {
 data class MapUiState(
     val hasPermission: Boolean = false,
     val isActiveA: Boolean = false,
-    val isActiveB: Boolean = false,
     val pointA: LocationData? = null,
+    val isActiveB: Boolean = false,
     val pointB: LocationData? = null,
+    val favorite: FavoritePoint? = null,
+    val isJitterActiveA: Boolean = false,
+    val jitterBaseA: LocationData? = null,
+    val isJitterActiveB: Boolean = false,
+    val jitterBaseB: LocationData? = null,
+    val jitterConfigA: JitterConfig = JitterConfig(),
+    val jitterConfigB: JitterConfig = JitterConfig(),
     val isTrackPanelLocked: Boolean = false,
     val isZoomPanelLocked: Boolean = false,
     val trackPanelOffset: PanelOffset? = null,
@@ -39,9 +48,14 @@ sealed interface MapIntent {
     data object PermissionDenied : MapIntent
     data class ToggleA(val pinLocation: LocationData) : MapIntent
     data class ToggleB(val pinLocation: LocationData) : MapIntent
+    data class SaveFavorite(val name: String, val location: LocationData) : MapIntent
+    data object DeleteFavorite : MapIntent
+    data class ToggleJitter(val target: JitterTarget) : MapIntent
+    data class UpdateJitterConfig(val target: JitterTarget, val config: JitterConfig) : MapIntent
     data object FocusCurrentLocation : MapIntent
     data object FocusPointA : MapIntent
     data object FocusPointB : MapIntent
+    data object FocusFavorite : MapIntent
     data object ToggleTrackPanelLock : MapIntent
     data object ToggleZoomPanelLock : MapIntent
     data class TrackPanelOffsetChanged(val offset: PanelOffset) : MapIntent
