@@ -15,7 +15,6 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        // API key Maps di-inject dari environment (GitHub Secret)
         manifestPlaceholders["MAPS_API_KEY"] = System.getenv("MAPS_API_KEY") ?: ""
     }
 
@@ -53,6 +52,11 @@ android {
 }
 
 dependencies {
+    // ===== Xposed Modern API (LSPosed) =====
+    // Hanya stub waktu kompilasi — implementasi asli disediakan framework LSPosed
+    // di runtime, jadi tidak ikut ter-bundle ke APK (compileOnly).
+    compileOnly("io.github.libxposed:api:102")
+
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.09.03"))
     implementation("androidx.compose.ui:ui")
