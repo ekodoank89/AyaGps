@@ -18,6 +18,15 @@ android {
         manifestPlaceholders["MAPS_API_KEY"] = System.getenv("MAPS_API_KEY") ?: ""
     }
 
+        signingConfigs {
+        create("release") {
+            storeFile = file("aya-release.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("KEY_ALIAS")
+            keyPassword = System.getenv("KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -26,8 +35,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Signing dipindah ke workflow (apksigner) agar META-INF/xposed
-            // bisa disuntikkan SEBELUM APK ditandatangani
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
