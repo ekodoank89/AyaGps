@@ -69,13 +69,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aya.module.domain.model.LocationData
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerComposable
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 import java.util.Locale
@@ -165,14 +164,6 @@ private fun MapContent(
     /** Titik tengah peta = posisi pin */
     val center: LatLng = cameraPositionState.position.target
 
-    // Ikon marker di-cache (tidak dibuat ulang tiap recompose)
-    val markerAIcon = remember {
-        BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
-    }
-    val markerBIcon = remember {
-        BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_ORANGE)
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
 
         GoogleMap(
@@ -188,22 +179,36 @@ private fun MapContent(
                 mapToolbarEnabled = false
             )
         ) {
-            // Marker A — muncul saat play, hilang saat stop
+            // Marker A — muncul saat play, hilang saat stop.
+            // MarkerComposable: konten digambar Compose, TIDAK pakai BitmapDescriptorFactory
+            // (yang menyebabkan crash saat dipanggil sebelum map siap).
             pointA?.let { p ->
-                Marker(
+                MarkerComposable(
                     state = MarkerState(position = LatLng(p.latitude, p.longitude)),
-                    title = "Titik A",
-                    icon = markerAIcon
-                )
+                    title = "Titik A"
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.LocationOn,
+                        contentDescription = "Marker A",
+                        tint = TrackAColor,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
             }
 
             // Marker B — muncul saat play, hilang saat stop
             pointB?.let { p ->
-                Marker(
+                MarkerComposable(
                     state = MarkerState(position = LatLng(p.latitude, p.longitude)),
-                    title = "Titik B",
-                    icon = markerBIcon
-                )
+                    title = "Titik B"
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.LocationOn,
+                        contentDescription = "Marker B",
+                        tint = TrackBColor,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
             }
         }
 
@@ -270,7 +275,6 @@ private fun MapContent(
 
 /**
  * Chip titik: indikator berkedip + badge huruf + koordinat titik yang ditandai pin.
- * Hilang otomatis saat tombol di-stop (dikontrol if (isActive...) di pemanggil).
  */
 @Composable
 private fun PointChip(
