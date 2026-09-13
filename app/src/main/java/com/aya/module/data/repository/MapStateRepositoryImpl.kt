@@ -2,6 +2,7 @@ package com.aya.module.data.repository
 
 import android.content.Context
 import com.aya.module.domain.model.LocationData
+import com.aya.module.domain.model.SavedPanelLocks
 import com.aya.module.domain.model.SavedPointsState
 import com.aya.module.domain.repository.MapStateRepository
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +36,22 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         )
     }
 
+    override suspend fun savePanelLocks(state: SavedPanelLocks) {
+        withContext(Dispatchers.IO) {
+            prefs.edit()
+                .putBoolean(KEY_TRACK_LOCKED, state.trackLocked)
+                .putBoolean(KEY_ZOOM_LOCKED, state.zoomLocked)
+                .commit()
+        }
+    }
+
+    override suspend fun loadPanelLocks(): SavedPanelLocks = withContext(Dispatchers.IO) {
+        SavedPanelLocks(
+            trackLocked = prefs.getBoolean(KEY_TRACK_LOCKED, false),
+            zoomLocked = prefs.getBoolean(KEY_ZOOM_LOCKED, false)
+        )
+    }
+
     private fun readPoint(latKey: String, lngKey: String): LocationData? {
         val lat = prefs.getString(latKey, null)?.toDoubleOrNull() ?: return null
         val lng = prefs.getString(lngKey, null)?.toDoubleOrNull() ?: return null
@@ -49,5 +66,7 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         const val KEY_ACTIVE_B = "active_b"
         const val KEY_LAT_B = "lat_b"
         const val KEY_LNG_B = "lng_b"
+        const val KEY_TRACK_LOCKED = "track_panel_locked"
+        const val KEY_ZOOM_LOCKED = "zoom_panel_locked"
     }
 }
