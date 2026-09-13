@@ -46,13 +46,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -73,10 +73,15 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aya.module.AyaGpsApp
 import com.aya.module.domain.model.LocationData
+import com.aya.module.domain.model.PanelOffset
+import com.aya.module.domain.model.SavedCameraState
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
@@ -104,12 +109,6 @@ private val PinRed = Color(0xFFE53935)
 private val TrackAColor = Color(0xFF1E88E5) // biru
 private val TrackBColor = Color(0xFFFB8C00) // oranye
 
-/** Saver agar posisi panel tidak reset saat layar dirotasi */
-private val OffsetSaver = listSaver<Offset, Float>(
-    save = { listOf(it.x, it.y) },
-    restore = { Offset(it[0], it[1]) }
-)
-
 /** Titik jangkar awal panel */
 private enum class PanelAnchor { BottomCenter, CenterEnd }
 
@@ -129,6 +128,18 @@ fun MapScreen() {
     // Kamera di-hoist: dibaca tombol A/B, dan dikendalikan autofocus/zoom
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(DEFAULT_POSITION, STANDARD_ZOOM)
+    }
+
+    // Pulihkan posisi kamera/pin terakhir dari disk (sekali, setelah data dimuat)
+    var cameraRestored by remember { mutableStateOf(false) }
+    LaunchedEffect(state.cameraState) {
+        val saved = state.cameraState ?: return@LaunchedEffect
+        if (!cameraRestored) {
+            cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                LatLng(saved.latitude, saved.longitude), saved.zoom
+            )
+            cameraRestored = true
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -156,6 +167,28 @@ fun MapScreen() {
         }
     }
 
+    // Simpan posisi kamera/pin terakhir saat aplikasi ditinggalkan
+    // (home, layar mati, buka recents) — menjamin data tersimpan sebelum force stop
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                val pos = cameraPositionState.position
+                viewModel.onIntent(
+                    MapIntent.SaveCameraState(
+                        SavedCameraState(
+                            latitude = pos.target.latitude,
+                            longitude = pos.target.longitude,
+                            zoom = pos.zoom
+                        )
+                    )
+                )
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     /** Ambil koordinat pin tengah SAAT tombol ditekan (snapshot) */
     val currentPin: () -> LocationData = {
         val target = cameraPositionState.position.target
@@ -178,6 +211,10 @@ fun MapScreen() {
             anchorPadding = 40.dp,
             isLocked = state.isTrackPanelLocked,
             onToggleLock = { viewModel.onIntent(MapIntent.ToggleTrackPanelLock) },
+            savedOffset = state.trackPanelOffset,
+            onOffsetChanged = { off ->
+                viewModel.onIntent(MapIntent.TrackPanelOffsetChanged(PanelOffset(off.x, off.y)))
+            },
             modifier = Modifier.zIndex(2f)
         ) {
             TrackPanelContent(
@@ -196,6 +233,10 @@ fun MapScreen() {
             anchorPadding = 16.dp,
             isLocked = state.isZoomPanelLocked,
             onToggleLock = { viewModel.onIntent(MapIntent.ToggleZoomPanelLock) },
+            savedOffset = state.zoomPanelOffset,
+            onOffsetChanged = { off ->
+                viewModel.onIntent(MapIntent.ZoomPanelOffsetChanged(PanelOffset(off.x, off.y)))
+            },
             modifier = Modifier.zIndex(2f)
         ) {
             ZoomPanelContent(
@@ -424,7 +465,8 @@ private fun PointChip(
 }
 
 // ================== PANEL BISA DIGESER (GENERIC) ==================
-// State lock di-hoist ke ViewModel (dipersistenkan ke disk, bertahan force stop).
+// Semua state panel (lock + posisi drag) di-hoist ke ViewModel dan dipersistenkan
+// ke disk, sehingga bertahan terhadap force stop.
 
 @Composable
 private fun DraggablePanel(
@@ -432,12 +474,15 @@ private fun DraggablePanel(
     anchorPadding: Dp,
     isLocked: Boolean,
     onToggleLock: () -> Unit,
+    savedOffset: PanelOffset?,
+    onOffsetChanged: (Offset) -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
     var isDragging by remember { mutableStateOf(false) }
-    var dragOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
+    var dragOffset by remember { mutableStateOf(Offset.Zero) }
     var panelSize by remember { mutableStateOf(IntSize.Zero) }
+    var isOffsetApplied by remember { mutableStateOf(false) }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val density = LocalDensity.current
@@ -456,6 +501,21 @@ private fun DraggablePanel(
                 PanelAnchor.BottomCenter -> Offset((sw - pw) / 2f, sh - ph - pad)
                 PanelAnchor.CenterEnd -> Offset(sw - pw - pad, (sh - ph) / 2f)
             }
+
+        // Pulihkan posisi drag yang tersimpan (sekali, setelah panel terukur)
+        LaunchedEffect(savedOffset, panelSize) {
+            if (isOffsetApplied) return@LaunchedEffect
+            if (panelSize == IntSize.Zero || savedOffset == null) return@LaunchedEffect
+            val base = basePos(
+                panelSize.width.toFloat(), panelSize.height.toFloat(), screenW, screenH, padPx
+            )
+            val maxX = (screenW - panelSize.width).coerceAtLeast(0f)
+            val maxY = (screenH - panelSize.height).coerceAtLeast(0f)
+            val absX = (base.x + savedOffset.x).coerceIn(0f, maxX)
+            val absY = (base.y + savedOffset.y).coerceIn(0f, maxY)
+            dragOffset = Offset(absX - base.x, absY - base.y)
+            isOffsetApplied = true
+        }
 
         // Saat ukuran layar/panel berubah (rotasi): cukup clamp posisi.
         LaunchedEffect(screenW, screenH, panelSize) {
@@ -490,7 +550,10 @@ private fun DraggablePanel(
                     if (!isLocked) Modifier.pointerInput(Unit) {
                         detectDragGestures(
                             onDragStart = { isDragging = true },
-                            onDragEnd = { isDragging = false },
+                            onDragEnd = {
+                                isDragging = false
+                                onOffsetChanged(dragOffset) // simpan posisi ke disk
+                            },
                             onDragCancel = { isDragging = false }
                         ) { change, dragAmount ->
                             change.consume()
