@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
@@ -37,6 +38,8 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -56,12 +60,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -69,7 +75,9 @@ import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aya.module.AyaGpsApp
 import com.aya.module.domain.model.LocationData
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
@@ -78,6 +86,8 @@ import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.MarkerComposable
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -87,12 +97,13 @@ private val PERMISSIONS = arrayOf(
 )
 
 private val DEFAULT_POSITION = LatLng(-6.2088, 106.8456) // Jakarta
+private val STANDARD_ZOOM = 16f
+private val MAX_ZOOM = 20f
+private val FOCUS_ZOOM = 17f
 
 private val PinRed = Color(0xFFE53935)
 private val TrackAColor = Color(0xFF1E88E5) // biru
 private val TrackBColor = Color(0xFFFB8C00) // oranye
-
-private val PanelBottomPadding = 40.dp
 
 /** Saver agar posisi panel tidak reset saat layar dirotasi */
 private val OffsetSaver = listSaver<Offset, Float>(
@@ -100,15 +111,22 @@ private val OffsetSaver = listSaver<Offset, Float>(
     restore = { Offset(it[0], it[1]) }
 )
 
+/** Titik jangkar awal panel */
+private enum class PanelAnchor { BottomCenter, CenterEnd }
+
 @Composable
 fun MapScreen() {
     val context = LocalContext.current
-    val viewModel: MapViewModel = viewModel()
+    val app = context.applicationContext as AyaGpsApp
+    val viewModel: MapViewModel = viewModel {
+        MapViewModel(getCurrentLocation = app.container.getCurrentLocation)
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
 
-    // Kamera di-hoist ke sini agar koordinat pin bisa dibaca saat tombol di-tap
+    // Kamera di-hoist: dibaca tombol A/B, dan dikendalikan autofocus/zoom
     val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(DEFAULT_POSITION, 16f)
+        position = CameraPosition.fromLatLngZoom(DEFAULT_POSITION, STANDARD_ZOOM)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -123,6 +141,17 @@ fun MapScreen() {
     LaunchedEffect(Unit) {
         if (hasLocationPermission(context)) viewModel.onIntent(MapIntent.PermissionGranted)
         else permissionLauncher.launch(PERMISSIONS)
+    }
+
+    // Auto-focus: terbang ke posisi GPS user
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { loc ->
+            cameraPositionState.animate(
+                CameraUpdateFactory.newLatLngZoom(
+                    LatLng(loc.latitude, loc.longitude), FOCUS_ZOOM
+                )
+            )
+        }
     }
 
     /** Ambil koordinat pin tengah SAAT tombol ditekan (snapshot) */
@@ -141,13 +170,40 @@ fun MapScreen() {
             isActiveB = state.isActiveB
         )
 
-        DraggableControlPanel(
-            isActiveA = state.isActiveA,
-            isActiveB = state.isActiveB,
-            onToggleA = { viewModel.onIntent(MapIntent.ToggleA(currentPin())) },
-            onToggleB = { viewModel.onIntent(MapIntent.ToggleB(currentPin())) },
+        // ===== PANEL 1: A / lock / B (default bawah-tengah) =====
+        DraggablePanel(
+            anchor = PanelAnchor.BottomCenter,
+            anchorPadding = 40.dp,
             modifier = Modifier.zIndex(2f)
-        )
+        ) { locked, toggleLock ->
+            TrackPanelContent(
+                isLocked = locked,
+                onToggleLock = toggleLock,
+                isActiveA = state.isActiveA,
+                isActiveB = state.isActiveB,
+                onToggleA = { viewModel.onIntent(MapIntent.ToggleA(currentPin())) },
+                onToggleB = { viewModel.onIntent(MapIntent.ToggleB(currentPin())) }
+            )
+        }
+
+        // ===== PANEL 2: AutoFocus / lock / ZoomIn / ZoomOut (default kanan-tengah) =====
+        DraggablePanel(
+            anchor = PanelAnchor.CenterEnd,
+            anchorPadding = 16.dp,
+            modifier = Modifier.zIndex(2f)
+        ) { locked, toggleLock ->
+            ZoomPanelContent(
+                isLocked = locked,
+                onToggleLock = toggleLock,
+                onFocus = { viewModel.onIntent(MapIntent.FocusCurrentLocation) },
+                onZoomIn = {
+                    scope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomTo(MAX_ZOOM)) }
+                },
+                onZoomOut = {
+                    scope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomTo(STANDARD_ZOOM)) }
+                }
+            )
+        }
     }
 }
 
@@ -285,12 +341,12 @@ private fun MapContent(
                 }
             }
 
-            // Chip titik A — tampil hanya saat A aktif (tidak bisa di-hide)
+            // Chip titik A — tampil hanya saat A aktif
             if (isActiveA) {
                 PointChip(label = "A", accent = TrackAColor, location = pointA)
             }
 
-            // Chip titik B — tampil hanya saat B aktif (tidak bisa di-hide)
+            // Chip titik B — tampil hanya saat B aktif
             if (isActiveB) {
                 PointChip(label = "B", accent = TrackBColor, location = pointB)
             }
@@ -361,15 +417,16 @@ private fun PointChip(
     }
 }
 
-// ================== PANEL KONTROL VERTIKAL BISA DIGESER ==================
+// ================== PANEL BISA DIGESER (GENERIC) ==================
+// Satu implementasi untuk semua panel: state lock independen per panel,
+// posisi awal sesuai anchor, clamp tetap di dalam layar, posisi tersimpan saat rotasi.
 
 @Composable
-private fun DraggableControlPanel(
-    isActiveA: Boolean,
-    isActiveB: Boolean,
-    onToggleA: () -> Unit,
-    onToggleB: () -> Unit,
-    modifier: Modifier = Modifier
+private fun DraggablePanel(
+    anchor: PanelAnchor,
+    anchorPadding: Dp,
+    modifier: Modifier = Modifier,
+    content: @Composable (isLocked: Boolean, onToggleLock: () -> Unit) -> Unit
 ) {
     var isLocked by rememberSaveable { mutableStateOf(false) }
     var isDragging by remember { mutableStateOf(false) }
@@ -380,29 +437,46 @@ private fun DraggableControlPanel(
         val density = LocalDensity.current
         val screenW = constraints.maxWidth.toFloat()
         val screenH = constraints.maxHeight.toFloat()
-        val bottomPadPx = with(density) { PanelBottomPadding.toPx() }
+        val padPx = with(density) { anchorPadding.toPx() }
 
         val currentScreenW by rememberUpdatedState(screenW)
         val currentScreenH by rememberUpdatedState(screenH)
         val currentPanelSize by rememberUpdatedState(panelSize)
-        val currentBottomPad by rememberUpdatedState(bottomPadPx)
+        val currentPad by rememberUpdatedState(padPx)
+
+        /** Posisi dasar (tanpa drag) sesuai anchor */
+        fun basePos(pw: Float, ph: Float, sw: Float, sh: Float, pad: Float): Offset =
+            when (anchor) {
+                PanelAnchor.BottomCenter -> Offset((sw - pw) / 2f, sh - ph - pad)
+                PanelAnchor.CenterEnd -> Offset(sw - pw - pad, (sh - ph) / 2f)
+            }
 
         // Saat ukuran layar/panel berubah (rotasi): cukup clamp posisi.
         LaunchedEffect(screenW, screenH, panelSize) {
             if (panelSize == IntSize.Zero) return@LaunchedEffect
-            val baseX = (screenW - panelSize.width) / 2f
-            val baseY = screenH - panelSize.height - bottomPadPx
+            val base = basePos(
+                panelSize.width.toFloat(), panelSize.height.toFloat(), screenW, screenH, padPx
+            )
             val maxX = (screenW - panelSize.width).coerceAtLeast(0f)
             val maxY = (screenH - panelSize.height).coerceAtLeast(0f)
-            val absX = (baseX + dragOffset.x).coerceIn(0f, maxX)
-            val absY = (baseY + dragOffset.y).coerceIn(0f, maxY)
-            dragOffset = Offset(absX - baseX, absY - baseY)
+            val absX = (base.x + dragOffset.x).coerceIn(0f, maxX)
+            val absY = (base.y + dragOffset.y).coerceIn(0f, maxY)
+            dragOffset = Offset(absX - base.x, absY - base.y)
+        }
+
+        val alignment = when (anchor) {
+            PanelAnchor.BottomCenter -> Alignment.BottomCenter
+            PanelAnchor.CenterEnd -> Alignment.CenterEnd
+        }
+        val sidePadding = when (anchor) {
+            PanelAnchor.BottomCenter -> Modifier.padding(bottom = anchorPadding)
+            PanelAnchor.CenterEnd -> Modifier.padding(end = anchorPadding)
         }
 
         Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = PanelBottomPadding)
+                .align(alignment)
+                .then(sidePadding)
                 .onSizeChanged { panelSize = it }
                 .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
                 .shakeIfUnlocked(!isLocked)
@@ -416,37 +490,33 @@ private fun DraggableControlPanel(
                             change.consume()
                             val size = currentPanelSize
                             if (size == IntSize.Zero || size.width == 0) return@detectDragGestures
-                            val baseX = (currentScreenW - size.width) / 2f
-                            val baseY = currentScreenH - size.height - currentBottomPad
+                            val base = basePos(
+                                size.width.toFloat(), size.height.toFloat(),
+                                currentScreenW, currentScreenH, currentPad
+                            )
                             val maxX = (currentScreenW - size.width).coerceAtLeast(0f)
                             val maxY = (currentScreenH - size.height).coerceAtLeast(0f)
-                            val absX = (baseX + dragOffset.x + dragAmount.x).coerceIn(0f, maxX)
-                            val absY = (baseY + dragOffset.y + dragAmount.y).coerceIn(0f, maxY)
-                            dragOffset = Offset(absX - baseX, absY - baseY)
+                            val absX = (base.x + dragOffset.x + dragAmount.x).coerceIn(0f, maxX)
+                            val absY = (base.y + dragOffset.y + dragAmount.y).coerceIn(0f, maxY)
+                            dragOffset = Offset(absX - base.x, absY - base.y)
                         }
                     } else Modifier
                 )
         ) {
-            PanelContent(
-                isLocked = isLocked,
-                isDragging = isDragging,
-                isActiveA = isActiveA,
-                isActiveB = isActiveB,
-                onToggleLock = { isLocked = !isLocked },
-                onToggleA = onToggleA,
-                onToggleB = onToggleB
-            )
+            content(isLocked) { isLocked = !isLocked }
         }
     }
 }
 
+// ================== KONTEN PANEL ==================
+
+/** Panel 1: A / lock / B (vertikal) */
 @Composable
-private fun PanelContent(
+private fun TrackPanelContent(
     isLocked: Boolean,
-    isDragging: Boolean,
+    onToggleLock: () -> Unit,
     isActiveA: Boolean,
     isActiveB: Boolean,
-    onToggleLock: () -> Unit,
     onToggleA: () -> Unit,
     onToggleB: () -> Unit
 ) {
@@ -454,33 +524,75 @@ private fun PanelContent(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp,
-        shadowElevation = if (isDragging) 10.dp else 5.dp,
         border = if (isLocked) {
             BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         } else null
     ) {
-        // ===== SUSUNAN VERTIKAL: A di atas, gembok tengah, B di bawah =====
         Column(
             modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             TrackButton("A", isActiveA, onToggleA)
-            HorizontalDivider(
-                modifier = Modifier
-                    .width(36.dp)
-                    .padding(vertical = 6.dp),
-                color = MaterialTheme.colorScheme.outlineVariant
-            )
+            PanelDivider()
             LockButton(isLocked, onToggleLock)
-            HorizontalDivider(
-                modifier = Modifier
-                    .width(36.dp)
-                    .padding(vertical = 6.dp),
-                color = MaterialTheme.colorScheme.outlineVariant
-            )
+            PanelDivider()
             TrackButton("B", isActiveB, onToggleB)
         }
     }
+}
+
+/** Panel 2: AutoFocus / lock / ZoomIn / ZoomOut (vertikal) */
+@Composable
+private fun ZoomPanelContent(
+    isLocked: Boolean,
+    onToggleLock: () -> Unit,
+    onFocus: () -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+        border = if (isLocked) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        } else null
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            RoundIconButton(
+                icon = Icons.Filled.CenterFocusStrong,
+                description = "Auto fokus ke posisi saya",
+                onClick = onFocus
+            )
+            PanelDivider()
+            LockButton(isLocked, onToggleLock)
+            PanelDivider()
+            RoundIconButton(
+                icon = Icons.Filled.ZoomIn,
+                description = "Perbesar ke zoom maksimum",
+                onClick = onZoomIn
+            )
+            PanelDivider()
+            RoundIconButton(
+                icon = Icons.Filled.ZoomOut,
+                description = "Kembali ke zoom standar",
+                onClick = onZoomOut
+            )
+        }
+    }
+}
+
+@Composable
+private fun PanelDivider() {
+    HorizontalDivider(
+        modifier = Modifier
+            .width(36.dp)
+            .padding(vertical = 6.dp),
+        color = MaterialTheme.colorScheme.outlineVariant
+    )
 }
 
 @Composable
@@ -508,6 +620,28 @@ private fun TrackButton(label: String, isActive: Boolean, onClick: () -> Unit) {
             color = if (isActive) MaterialTheme.colorScheme.error
             else MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun RoundIconButton(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.size(44.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = description,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
     }
 }
 
