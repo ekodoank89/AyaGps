@@ -29,7 +29,7 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > app/aya-release.jks
 
-            - name: Build Release APK (signed via gradle)
+      - name: Build Release APK (signed via gradle)
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -37,56 +37,14 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Suntikkan konfigurasi LSPosed Modern API ke APK
+      - name: Rapikan nama APK
         run: |
-          APK=app/build/outputs/apk/release/app-release-unsigned.apk
-          test -f "$APK" || { echo "APK tidak ditemukan"; exit 1; }
-
-          mkdir -p metainf/META-INF/xposed
-          SRC=app/src/main/resources/META-INF/xposed
-
-          # java_init.list & scope.list: pakai dari repo jika ada, fallback default
-          if [ -f "$SRC/java_init.list" ]; then cp "$SRC/java_init.list" metainf/META-INF/xposed/
-          else printf 'com.aya.module.xposed.AyaGpsModule\n' > metainf/META-INF/xposed/java_init.list; fi
-
-          if [ -f "$SRC/scope.list" ]; then cp "$SRC/scope.list" metainf/META-INF/xposed/
-          else printf 'com.google.android.apps.maps\n' > metainf/META-INF/xposed/scope.list; fi
-
-          # minversion & targetversion WAJIB 102 (LSPosed menolak < 101)
-          printf '102\n' > metainf/META-INF/xposed/minversion
-          printf '102\n' > metainf/META-INF/xposed/targetversion
-
-          cd metainf
-          zip -u "../$APK" META-INF/xposed/*
-          cd ..
-          echo "=== Isi META-INF/xposed di APK ==="
-          unzip -l "$APK" | grep META-INF/xposed
-
-      - name: Zipalign APK
-        run: |
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-          "$BT/zipalign" -f -p 4 \
-            app/build/outputs/apk/release/app-release-unsigned.apk \
-            app/build/outputs/apk/release/app-release-aligned.apk
-
-      - name: Tandatangani APK (apksigner)
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-          "$BT/apksigner" sign \
-            --ks app/aya-release.jks \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass "pass:$KEYSTORE_PASSWORD" \
-            --key-pass "pass:$KEY_PASSWORD" \
-            --out app/build/outputs/apk/release/AyaGps.apk \
-            app/build/outputs/apk/release/app-release-aligned.apk
-          "$BT/apksigner" verify app/build/outputs/apk/release/AyaGps.apk
+          mkdir -p apk_out
+          cp app/build/outputs/apk/release/*.apk apk_out/AyaGps.apk
+          ls -la apk_out/
 
       - name: Upload APK ke Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: AyaGps-Release-APK
-          path: app/build/outputs/apk/release/AyaGps.apk
+          path: apk_out/AyaGps.apk
