@@ -5,7 +5,7 @@ on:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch: # Mengizinkan Anda menjalankan build secara manual dari web GitHub
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,13 +20,15 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
 
-    - name: Grant Execute Permission for Gradle Wrapper
-      run: chmod +x gradlew
+    # Langkah khusus untuk mengunduh Gradle Wrapper biner resmi secara otomatis
+    - name: Setup Gradle Environment Automatically
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: 8.8
 
     - name: Build Debug APK with Gradle
-      run: ./gradlew assembleDebug
+      run: gradle assembleDebug
 
     - name: Upload Compiled APK Artifact
       uses: actions/upload-artifact@v4
