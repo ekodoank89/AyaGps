@@ -103,7 +103,6 @@ private val PERMISSIONS = arrayOf(
 private val DEFAULT_POSITION = LatLng(-6.2088, 106.8456) // Jakarta
 private val STANDARD_ZOOM = 16f
 private val MAX_ZOOM = 20f
-private val FOCUS_ZOOM = 17f
 
 private val PinRed = Color(0xFFE53935)
 private val TrackAColor = Color(0xFF1E88E5) // biru
@@ -156,13 +155,14 @@ fun MapScreen() {
         else permissionLauncher.launch(PERMISSIONS)
     }
 
-    // Auto-focus: terbang ke posisi GPS user
+    // Perintah kamera satu-shot: auto-focus GPS (zoom FOCUS_ZOOM)
+    // dan lompat ke marker A/B (zoom saat ini dipertahankan)
     LaunchedEffect(Unit) {
-        viewModel.events.collect { loc ->
+        viewModel.events.collect { event ->
+            val target = LatLng(event.location.latitude, event.location.longitude)
+            val zoom = event.zoom ?: cameraPositionState.position.zoom
             cameraPositionState.animate(
-                CameraUpdateFactory.newLatLngZoom(
-                    LatLng(loc.latitude, loc.longitude), FOCUS_ZOOM
-                )
+                CameraUpdateFactory.newLatLngZoom(target, zoom)
             )
         }
     }
@@ -202,7 +202,9 @@ fun MapScreen() {
             pointA = state.pointA,
             pointB = state.pointB,
             isActiveA = state.isActiveA,
-            isActiveB = state.isActiveB
+            isActiveB = state.isActiveB,
+            onFocusA = { viewModel.onIntent(MapIntent.FocusPointA) },
+            onFocusB = { viewModel.onIntent(MapIntent.FocusPointB) }
         )
 
         // ===== PANEL 1: A / lock / B (default bawah-tengah) =====
@@ -263,7 +265,9 @@ private fun MapContent(
     pointA: LocationData?,
     pointB: LocationData?,
     isActiveA: Boolean,
-    isActiveB: Boolean
+    isActiveB: Boolean,
+    onFocusA: () -> Unit,
+    onFocusB: () -> Unit
 ) {
     /** Titik tengah peta = posisi pin */
     val center: LatLng = cameraPositionState.position.target
@@ -388,14 +392,24 @@ private fun MapContent(
                 }
             }
 
-            // Chip titik A — tampil hanya saat A aktif
+            // Chip titik A — tampil saat A aktif, TAP untuk terbang ke marker A
             if (isActiveA) {
-                PointChip(label = "A", accent = TrackAColor, location = pointA)
+                PointChip(
+                    label = "A",
+                    accent = TrackAColor,
+                    location = pointA,
+                    onClick = onFocusA
+                )
             }
 
-            // Chip titik B — tampil hanya saat B aktif
+            // Chip titik B — tampil saat B aktif, TAP untuk terbang ke marker B
             if (isActiveB) {
-                PointChip(label = "B", accent = TrackBColor, location = pointB)
+                PointChip(
+                    label = "B",
+                    accent = TrackBColor,
+                    location = pointB,
+                    onClick = onFocusB
+                )
             }
         }
     }
@@ -403,12 +417,14 @@ private fun MapContent(
 
 /**
  * Chip titik: indikator berkedip + badge huruf + koordinat titik yang ditandai pin.
+ * Bisa di-tap untuk menerbangkan kamera ke marker terkait.
  */
 @Composable
 private fun PointChip(
     label: String,
     accent: Color,
-    location: LocationData?
+    location: LocationData?,
+    onClick: () -> Unit
 ) {
     val blinkTransition = rememberInfiniteTransition(label = "blink")
     val blinkAlpha by blinkTransition.animateFloat(
@@ -422,6 +438,7 @@ private fun PointChip(
     )
 
     Surface(
+        onClick = onClick,
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 3.dp,
