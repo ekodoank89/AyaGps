@@ -147,6 +147,9 @@ private class PointConfig {
             XposedBridge.log("AYAGPS: XSharedPreferences gagal: $t")
             return
         }
+        XposedBridge.log("AYAGPS: debug baca prefs → a=${sp.getBoolean("active_a", false)} b=${sp.getBoolean("active_b", false)}")
+            return
+        }
 
         // Titik A dulu; kalau tidak aktif, pakai B
         val a = sp.getBoolean("active_a", false)
