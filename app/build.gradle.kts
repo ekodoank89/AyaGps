@@ -44,8 +44,8 @@ android {
 }
 
 dependencies {
-    // Xposed Modern API — stub kompilasi LOKAL (tidak ikut ter-bundle ke APK).
-    compileOnly(project(":xposed-api-stub"))
+    // Xposed Legacy API (de.robv) — stub waktu kompilasi, tidak ikut ke APK
+    compileOnly("de.robv.android.xposed:api:82")
 
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.09.03"))
