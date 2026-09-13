@@ -1,8 +1,6 @@
 package io.github.libxposed.api;
 
-/**
- * STUB kompilasi dari interface framework libxposed Modern API.
- */
+/** STUB kompilasi dari interface framework libxposed Modern API. */
 public interface XposedModuleInterface {
 
     /** Parameter saat modul di-load ke sebuah proses */
