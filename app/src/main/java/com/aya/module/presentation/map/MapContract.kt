@@ -1,6 +1,8 @@
 package com.aya.module.presentation.map
 
 import com.aya.module.domain.model.LocationData
+import com.aya.module.domain.model.PanelOffset
+import com.aya.module.domain.model.SavedCameraState
 
 /** ===== UI STATE ===== */
 data class MapUiState(
@@ -10,7 +12,10 @@ data class MapUiState(
     val pointA: LocationData? = null,
     val pointB: LocationData? = null,
     val isTrackPanelLocked: Boolean = false,
-    val isZoomPanelLocked: Boolean = false
+    val isZoomPanelLocked: Boolean = false,
+    val trackPanelOffset: PanelOffset? = null,
+    val zoomPanelOffset: PanelOffset? = null,
+    val cameraState: SavedCameraState? = null
 )
 
 /** ===== INTENT ===== */
@@ -22,4 +27,7 @@ sealed interface MapIntent {
     data object FocusCurrentLocation : MapIntent
     data object ToggleTrackPanelLock : MapIntent
     data object ToggleZoomPanelLock : MapIntent
+    data class TrackPanelOffsetChanged(val offset: PanelOffset) : MapIntent
+    data class ZoomPanelOffsetChanged(val offset: PanelOffset) : MapIntent
+    data class SaveCameraState(val camera: SavedCameraState) : MapIntent
 }
