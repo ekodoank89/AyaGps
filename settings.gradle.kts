@@ -11,9 +11,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Repository resmi Xposed API (de.robv.android.xposed:api)
+        maven { url = uri("https://api.xposed.info/") }
     }
 }
 
 rootProject.name = "AyaGps"
 include(":app")
-include(":xposed-api-stub")
