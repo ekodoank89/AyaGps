@@ -13,6 +13,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,16 +24,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
@@ -48,6 +54,7 @@ import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -69,6 +76,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -111,7 +119,6 @@ import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 private val PERMISSIONS = arrayOf(
     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -123,12 +130,19 @@ private val STANDARD_ZOOM = 16f
 private val MAX_ZOOM = 20f
 
 private val PinRed = Color(0xFFE53935)
-private val TrackAColor = Color(0xFF1E88E5)      // biru
-private val TrackBColor = Color(0xFFFB8C00)      // oranye
-private val FavoriteGold = Color(0xFFF9A825)     // emas
+private val TrackAColor = Color(0xFF1E88E5) // biru
+private val TrackBColor = Color(0xFFFB8C00) // oranye
 
 /** Titik jangkar awal panel */
 private enum class PanelAnchor { BottomCenter, CenterEnd }
+
+/** State form tambah/edit favorit */
+private data class FavoriteFormState(
+    val editIndex: Int?, // null = tambah baru
+    val initialName: String,
+    val initialLat: Double?,
+    val initialLng: Double?
+)
 
 @Composable
 fun MapScreen() {
@@ -175,7 +189,7 @@ fun MapScreen() {
     }
 
     // Perintah kamera satu-shot: auto-focus GPS (zoom FOCUS_ZOOM)
-    // dan lompat ke marker (zoom saat ini dipertahankan)
+    // dan lompat ke titik/marker (zoom saat ini dipertahankan)
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
@@ -234,10 +248,8 @@ fun MapScreen() {
             isActiveB = state.isActiveB,
             isJitterActiveA = state.isJitterActiveA,
             isJitterActiveB = state.isJitterActiveB,
-            favorite = state.favorite,
             onFocusA = { viewModel.onIntent(MapIntent.FocusPointA) },
-            onFocusB = { viewModel.onIntent(MapIntent.FocusPointB) },
-            onFavoriteClick = { viewModel.onIntent(MapIntent.FocusFavorite) }
+            onFocusB = { viewModel.onIntent(MapIntent.FocusPointB) }
         )
 
         // ===== PANEL 1: A / B / lock / Fav / Jitter (default bawah-tengah) =====
@@ -259,7 +271,7 @@ fun MapScreen() {
                 onToggleA = { viewModel.onIntent(MapIntent.ToggleA(currentPin())) },
                 isActiveB = state.isActiveB,
                 onToggleB = { viewModel.onIntent(MapIntent.ToggleB(currentPin())) },
-                isFavoriteActive = state.favorite != null,
+                isFavoriteActive = state.favoritesA.isNotEmpty() || state.favoritesB.isNotEmpty(),
                 onFavorite = {
                     favoriteDialogPin = currentPin()
                     showFavoriteDialog = true
@@ -295,23 +307,21 @@ fun MapScreen() {
         }
 
         // ===== DIALOG FAVORIT =====
-        val dialogPin = favoriteDialogPin
-        if (showFavoriteDialog && dialogPin != null) {
+        if (showFavoriteDialog) {
             FavoriteDialog(
-                pin = dialogPin,
-                existing = state.favorite,
+                pin = favoriteDialogPin ?: currentPin(),
+                favoritesA = state.favoritesA,
+                favoritesB = state.favoritesB,
                 onDismiss = { showFavoriteDialog = false },
-                onSaveFromPin = { name ->
-                    viewModel.onIntent(MapIntent.SaveFavorite(name, dialogPin))
+                onPlay = { category, index ->
                     showFavoriteDialog = false
+                    viewModel.onIntent(MapIntent.PlayFavorite(category, index))
                 },
-                onSaveManual = { name, lat, lng ->
-                    viewModel.onIntent(MapIntent.SaveFavorite(name, LocationData(lat, lng)))
-                    showFavoriteDialog = false
+                onSave = { category, index, name, location ->
+                    viewModel.onIntent(MapIntent.SaveFavorite(category, index, name, location))
                 },
-                onDelete = {
-                    viewModel.onIntent(MapIntent.DeleteFavorite)
-                    showFavoriteDialog = false
+                onDelete = { category, index ->
+                    viewModel.onIntent(MapIntent.DeleteFavorite(category, index))
                 }
             )
         }
@@ -349,10 +359,8 @@ private fun MapContent(
     isActiveB: Boolean,
     isJitterActiveA: Boolean,
     isJitterActiveB: Boolean,
-    favorite: FavoritePoint?,
     onFocusA: () -> Unit,
-    onFocusB: () -> Unit,
-    onFavoriteClick: () -> Unit
+    onFocusB: () -> Unit
 ) {
     /** Titik tengah peta = posisi pin */
     val center: LatLng = cameraPositionState.position.target
@@ -404,23 +412,6 @@ private fun MapContent(
                     )
                 }
             }
-
-            // Marker favorit (bintang emas)
-            favorite?.let { fav ->
-                MarkerComposable(
-                    state = MarkerState(
-                        position = LatLng(fav.location.latitude, fav.location.longitude)
-                    ),
-                    title = fav.name
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Star,
-                        contentDescription = "Marker Favorit",
-                        tint = FavoriteGold,
-                        modifier = Modifier.size(40.dp)
-                    )
-                }
-            }
         }
 
         // ---- PIN TETAP DI TENGAH ----
@@ -434,14 +425,12 @@ private fun MapContent(
                 .offset(y = (-24).dp)
         )
 
-        // ---- CHIP ATAS TENGAH: pin + favorit di bawahnya ----
-        Column(
+        // ---- CHIP KOORDINAT PIN (ATAS TENGAH) — TAP untuk hide/unhide ----
+        Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(16.dp)
         ) {
             if (isPinChipVisible) {
                 Surface(
@@ -482,11 +471,6 @@ private fun MapContent(
                             .size(20.dp)
                     )
                 }
-            }
-
-            // Chip favorit — TAP untuk terbang ke marker favorit
-            favorite?.let { fav ->
-                FavoriteChip(favorite = fav, onClick = onFavoriteClick)
             }
         }
 
@@ -626,146 +610,271 @@ private fun PointChip(
     }
 }
 
-/** Chip favorit: badge bintang emas + nama + koordinat 2 baris */
+// ================== DIALOG FAVORIT ==================
+
+/**
+ * Dialog favorit: 2 tab (Favorite A / Favorite B), daftar favorit per kategori
+ * dengan aksi play (tap nama), edit, dan hapus (konfirmasi). Tombol + Tambah
+ * membuka form input (Dari Pin / Manual).
+ */
 @Composable
-private fun FavoriteChip(favorite: FavoritePoint, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp
+private fun FavoriteDialog(
+    pin: LocationData,
+    favoritesA: List<FavoritePoint>,
+    favoritesB: List<FavoritePoint>,
+    onDismiss: () -> Unit,
+    onPlay: (PointCategory, Int) -> Unit,
+    onSave: (PointCategory, Int?, String, LocationData) -> Unit,
+    onDelete: (PointCategory, Int) -> Unit
+) {
+    var tab by remember { mutableStateOf(0) } // 0 = A, 1 = B
+    val category = if (tab == 0) PointCategory.A else PointCategory.B
+    val favorites = if (tab == 0) favoritesA else favoritesB
+
+    var formState by remember { mutableStateOf<FavoriteFormState?>(null) }
+    var deleteIndex by remember { mutableStateOf<Int?>(null) }
+
+    // Dialog konfirmasi hapus
+    if (deleteIndex != null) {
+        val idx = deleteIndex!!
+        val target = favorites.getOrNull(idx)
+        AlertDialog(
+            onDismissRequest = { deleteIndex = null },
+            title = { Text("Hapus favorit?") },
+            text = { Text("Yakin ingin menghapus \"${target?.name ?: "-"}\"?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(category, idx)
+                    deleteIndex = null
+                }) {
+                    Text("Hapus", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteIndex = null }) { Text("Batal") }
+            }
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Favorite") },
+        text = {
+            if (formState == null) {
+                // ===== MODE DAFTAR =====
+                Column {
+                    TabRow(selectedTabIndex = tab) {
+                        Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Favorite A") })
+                        Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Favorite B") })
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (favorites.isEmpty()) {
+                        Text(
+                            text = "Belum ada favorit ${category.name}. " +
+                                    "Tekan \"Tambah\" untuk membuat.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            favorites.forEachIndexed { index, fav ->
+                                FavoriteListItem(
+                                    favorite = fav,
+                                    onPlay = { onPlay(category, index) },
+                                    onEdit = {
+                                        formState = FavoriteFormState(
+                                            editIndex = index,
+                                            initialName = fav.name,
+                                            initialLat = fav.location.latitude,
+                                            initialLng = fav.location.longitude
+                                        )
+                                    },
+                                    onDelete = { deleteIndex = index }
+                                )
+                            }
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            formState = FavoriteFormState(null, "", null, null)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("+ Tambah Favorite ${category.name}")
+                    }
+                }
+            } else {
+                // ===== MODE FORM (TAMBAH / EDIT) =====
+                FavoriteForm(
+                    category = category,
+                    form = formState!!,
+                    pin = pin,
+                    onCancel = { formState = null },
+                    onSubmit = { index, name, location ->
+                        onSave(category, index, name, location)
+                        formState = null
+                    }
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            if (formState == null) {
+                TextButton(onClick = onDismiss) { Text("Tutup") }
+            }
+        }
+    )
+}
+
+/** Item daftar favorit: tap nama = play; tombol edit & hapus di kanan */
+@Composable
+private fun FavoriteListItem(
+    favorite: FavoritePoint,
+    onPlay: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onPlay)
+                .padding(horizontal = 4.dp, vertical = 6.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(20.dp)
-                    .background(FavoriteGold, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Star,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(13.dp)
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Column {
-                Text(
-                    text = favorite.name,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                CoordTwoLines(
-                    latitude = favorite.location.latitude,
-                    longitude = favorite.location.longitude
-                )
-            }
+            Text(
+                text = favorite.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = String.format(Locale.US, "%.6f", favorite.location.latitude),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace
+            )
+            Text(
+                text = String.format(Locale.US, "%.6f", favorite.location.longitude),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+        IconButton(onClick = onEdit) {
+            Icon(
+                imageVector = Icons.Filled.Edit,
+                contentDescription = "Edit ${favorite.name}",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(
+                imageVector = Icons.Filled.Delete,
+                contentDescription = "Hapus ${favorite.name}",
+                tint = MaterialTheme.colorScheme.error
+            )
         }
     }
 }
 
-// ================== DIALOG FAVORIT ==================
-
+/** Form tambah/edit favorit: tab Dari Pin (read-only) / Manual (input bebas) */
 @Composable
-private fun FavoriteDialog(
+private fun FavoriteForm(
+    category: PointCategory,
+    form: FavoriteFormState,
     pin: LocationData,
-    existing: FavoritePoint?,
-    onDismiss: () -> Unit,
-    onSaveFromPin: (String) -> Unit,
-    onSaveManual: (String, Double, Double) -> Unit,
-    onDelete: () -> Unit
+    onCancel: () -> Unit,
+    onSubmit: (index: Int?, name: String, location: LocationData) -> Unit
 ) {
-    var tab by remember { mutableStateOf(0) } // 0 = dari pin, 1 = manual
-    var name by remember { mutableStateOf(existing?.name ?: "") }
-    var latText by remember { mutableStateOf(existing?.location?.latitude?.toString() ?: "") }
-    var lngText by remember { mutableStateOf(existing?.location?.longitude?.toString() ?: "") }
+    // Tambah → default tab "Dari Pin"; Edit → default "Manual" (terisi nilai lama)
+    var srcTab by remember { mutableStateOf(if (form.editIndex == null) 0 else 1) }
+    var name by remember { mutableStateOf(form.initialName) }
+    var latText by remember { mutableStateOf(form.initialLat?.toString() ?: "") }
+    var lngText by remember { mutableStateOf(form.initialLng?.toString() ?: "") }
 
-    val nameValid = name.isNotBlank()
     val manualLat = latText.replace(',', '.').toDoubleOrNull()
     val manualLng = lngText.replace(',', '.').toDoubleOrNull()
     val manualValid = manualLat != null && manualLat in -90.0..90.0 &&
             manualLng != null && manualLng in -180.0..180.0
-    val canSave = nameValid && (tab == 0 || manualValid)
+    val canSave = name.isNotBlank() && (srcTab == 0 || manualValid)
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (existing == null) "Tambah Favorit" else "Edit Favorit") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                TabRow(selectedTabIndex = tab) {
-                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Dari Pin") })
-                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Manual") })
-                }
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Nama favorit") },
-                    singleLine = true,
-                    isError = name.isNotEmpty() && !nameValid
-                )
-                if (tab == 0) {
-                    // Otomatis dari koordinat pin (read-only)
-                                        OutlinedTextField(
-                        value = String.format(Locale.US, "%.6f", pin.latitude),
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Latitude (dari pin)") },
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = String.format(Locale.US, "%.6f", pin.longitude),
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Longitude (dari pin)") },
-                        singleLine = true
-                    )
-                } else {
-                    OutlinedTextField(
-                        value = latText,
-                        onValueChange = { latText = it },
-                        label = { Text("Latitude (-90 s/d 90)") },
-                        singleLine = true,
-                        isError = latText.isNotEmpty() && manualLat == null,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                    )
-                    OutlinedTextField(
-                        value = lngText,
-                        onValueChange = { lngText = it },
-                        label = { Text("Longitude (-180 s/d 180)") },
-                        singleLine = true,
-                        isError = lngText.isNotEmpty() && manualLng == null,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                    )
-                }
-            }
-        },
-        confirmButton = {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = "Favorite ${category.name}" +
+                    if (form.editIndex != null) " — edit" else " — baru",
+            style = MaterialTheme.typography.labelLarge
+        )
+        TabRow(selectedTabIndex = srcTab) {
+            Tab(selected = srcTab == 0, onClick = { srcTab = 0 }, text = { Text("Dari Pin") })
+            Tab(selected = srcTab == 1, onClick = { srcTab = 1 }, text = { Text("Manual") })
+        }
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("Nama favorit") },
+            singleLine = true,
+            isError = name.isNotEmpty() && name.isBlank()
+        )
+        if (srcTab == 0) {
+            OutlinedTextField(
+                value = String.format(Locale.US, "%.6f", pin.latitude),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Latitude (dari pin)") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = String.format(Locale.US, "%.6f", pin.longitude),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Longitude (dari pin)") },
+                singleLine = true
+            )
+        } else {
+            OutlinedTextField(
+                value = latText,
+                onValueChange = { latText = it },
+                label = { Text("Latitude (-90 s/d 90)") },
+                singleLine = true,
+                isError = latText.isNotEmpty() && manualLat == null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+            OutlinedTextField(
+                value = lngText,
+                onValueChange = { lngText = it },
+                label = { Text("Longitude (-180 s/d 180)") },
+                singleLine = true,
+                isError = lngText.isNotEmpty() && manualLng == null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onCancel) { Text("Batal") }
             TextButton(
                 enabled = canSave,
                 onClick = {
-                    if (tab == 0) onSaveFromPin(name.trim())
-                    else onSaveManual(name.trim(), manualLat!!, manualLng!!)
-                }
-            ) { Text("Simpan") }
-        },
-        dismissButton = {
-            Row {
-                if (existing != null) {
-                    TextButton(onClick = onDelete) {
-                        Text("Hapus", color = MaterialTheme.colorScheme.error)
+                    if (srcTab == 0) {
+                        onSubmit(form.editIndex, name.trim(), pin)
+                    } else {
+                        onSubmit(
+                            form.editIndex, name.trim(),
+                            LocationData(manualLat!!, manualLng!!)
+                        )
                     }
                 }
-                TextButton(onClick = onDismiss) { Text("Batal") }
-            }
+            ) { Text("Simpan") }
         }
-    )
+    }
 }
 
 // ================== DIALOG JITTER ==================
@@ -778,12 +887,12 @@ private fun JitterDialog(
     isPointActiveB: Boolean,
     isJitterActiveA: Boolean,
     isJitterActiveB: Boolean,
-    onUpdateConfig: (JitterTarget, JitterConfig) -> Unit,
-    onToggleJitter: (JitterTarget) -> Unit,
+    onUpdateConfig: (PointCategory, JitterConfig) -> Unit,
+    onToggleJitter: (PointCategory) -> Unit,
     onDismiss: () -> Unit
 ) {
     var tab by remember { mutableStateOf(0) } // 0 = A, 1 = B
-    val target = if (tab == 0) JitterTarget.A else JitterTarget.B
+    val target = if (tab == 0) PointCategory.A else PointCategory.B
     val config = if (tab == 0) configA else configB
     val pointActive = if (tab == 0) isPointActiveA else isPointActiveB
     val jitterActive = if (tab == 0) isJitterActiveA else isJitterActiveB
