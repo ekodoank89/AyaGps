@@ -3,6 +3,7 @@ package com.aya.module.presentation.map
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aya.module.domain.model.LocationData
+import com.aya.module.domain.model.SavedPanelLocks
 import com.aya.module.domain.model.SavedPointsState
 import com.aya.module.domain.repository.MapStateRepository
 import com.aya.module.domain.usecase.GetCurrentLocationUseCase
@@ -28,16 +29,19 @@ class MapViewModel(
     val events: Flow<LocationData> = _events.receiveAsFlow()
 
     init {
-        // Pulihkan kondisi terakhir (A/B aktif + titiknya) saat aplikasi dibuka ulang,
+        // Pulihkan kondisi terakhir (titik A/B + lock panel) saat aplikasi dibuka ulang,
         // termasuk setelah force stop
         viewModelScope.launch {
             val saved = mapStateRepository.load()
+            val locks = mapStateRepository.loadPanelLocks()
             _state.update {
                 it.copy(
                     isActiveA = saved.isActiveA,
                     pointA = saved.pointA,
                     isActiveB = saved.isActiveB,
-                    pointB = saved.pointB
+                    pointB = saved.pointB,
+                    isTrackPanelLocked = locks.trackLocked,
+                    isZoomPanelLocked = locks.zoomLocked
                 )
             }
         }
@@ -64,6 +68,16 @@ class MapViewModel(
                 persistPoints()
             }
 
+            // Lock panel: toggle + persistenkan
+            MapIntent.ToggleTrackPanelLock -> {
+                _state.update { it.copy(isTrackPanelLocked = !it.isTrackPanelLocked) }
+                persistLocks()
+            }
+            MapIntent.ToggleZoomPanelLock -> {
+                _state.update { it.copy(isZoomPanelLocked = !it.isZoomPanelLocked) }
+                persistLocks()
+            }
+
             // Auto-focus: ambil posisi GPS terkini, kirim sebagai event kamera
             MapIntent.FocusCurrentLocation -> viewModelScope.launch {
                 try {
@@ -85,6 +99,19 @@ class MapViewModel(
                     pointA = s.pointA,
                     isActiveB = s.isActiveB,
                     pointB = s.pointB
+                )
+            )
+        }
+    }
+
+    /** Simpan kondisi lock kedua panel ke disk setiap kali berubah */
+    private fun persistLocks() {
+        val s = _state.value
+        viewModelScope.launch {
+            mapStateRepository.savePanelLocks(
+                SavedPanelLocks(
+                    trackLocked = s.isTrackPanelLocked,
+                    zoomLocked = s.isZoomPanelLocked
                 )
             )
         }
