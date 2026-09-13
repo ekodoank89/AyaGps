@@ -159,11 +159,17 @@ fun MapScreen() {
     // dan lompat ke marker A/B (zoom saat ini dipertahankan)
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
-            val target = LatLng(event.location.latitude, event.location.longitude)
-            val zoom = event.zoom ?: cameraPositionState.position.zoom
-            cameraPositionState.animate(
-                CameraUpdateFactory.newLatLngZoom(target, zoom)
-            )
+            when (event) {
+                is MapCameraEvent.FlyTo -> {
+                    val target = LatLng(
+                        event.location.latitude, event.location.longitude
+                    )
+                    val zoom = event.zoom ?: cameraPositionState.position.zoom
+                    cameraPositionState.animate(
+                        CameraUpdateFactory.newLatLngZoom(target, zoom)
+                    )
+                }
+            }
         }
     }
 
