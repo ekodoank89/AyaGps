@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "AyaGps"
 include(":app")
+include(":xposed-api-stub")
