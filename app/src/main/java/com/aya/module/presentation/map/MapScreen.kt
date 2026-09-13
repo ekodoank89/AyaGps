@@ -119,7 +119,10 @@ fun MapScreen() {
     val context = LocalContext.current
     val app = context.applicationContext as AyaGpsApp
     val viewModel: MapViewModel = viewModel {
-        MapViewModel(getCurrentLocation = app.container.getCurrentLocation)
+        MapViewModel(
+            getCurrentLocation = app.container.getCurrentLocation,
+            mapStateRepository = app.container.mapStateRepository
+        )
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
