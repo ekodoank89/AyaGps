@@ -1,11 +1,8 @@
 package com.aya.module.presentation.map
 
-import com.aya.module.domain.model.LocationData
-
 /** ===== UI STATE ===== */
 data class MapUiState(
-    val hasPermission: Boolean = false,
-    val location: LocationData? = null
+    val hasPermission: Boolean = false
 )
 
 /** ===== INTENT ===== */
