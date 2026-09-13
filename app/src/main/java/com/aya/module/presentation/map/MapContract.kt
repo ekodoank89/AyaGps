@@ -17,4 +17,5 @@ sealed interface MapIntent {
     data object PermissionDenied : MapIntent
     data class ToggleA(val pinLocation: LocationData) : MapIntent
     data class ToggleB(val pinLocation: LocationData) : MapIntent
+    data object FocusCurrentLocation : MapIntent
 }
