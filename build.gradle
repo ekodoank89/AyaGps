@@ -1,0 +1,7 @@
+// File build.gradle utama di root repositori
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
