@@ -12,19 +12,10 @@ android {
         applicationId = "com.aya.module"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2        // naikkan agar jelas APK baru ter-install
+        versionName = "1.0.1"
 
         manifestPlaceholders["MAPS_API_KEY"] = System.getenv("MAPS_API_KEY") ?: ""
-    }
-
-    signingConfigs {
-        create("release") {
-            storeFile = file("aya-release.jks")
-            storePassword = System.getenv("KEYSTORE_PASSWORD")
-            keyAlias = System.getenv("KEY_ALIAS")
-            keyPassword = System.getenv("KEY_PASSWORD")
-        }
     }
 
     buildTypes {
@@ -35,7 +26,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            // Signing dipindah ke workflow (apksigner) agar META-INF/xposed
+            // bisa disuntikkan SEBELUM APK ditandatangani
         }
     }
 
@@ -52,8 +44,7 @@ android {
 }
 
 dependencies {
-        // Xposed Modern API — stub kompilasi LOKAL (tidak ikut ter-bundle ke APK).
-    // Kelas asli disediakan framework LSPosed saat modul di-load.
+    // Xposed Modern API — stub kompilasi LOKAL (tidak ikut ter-bundle ke APK).
     compileOnly(project(":xposed-api-stub"))
 
     // Compose
