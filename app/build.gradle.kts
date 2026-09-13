@@ -1,3 +1,5 @@
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
+}
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -10,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.hotspot.module"
-        minSdk = 28 // Android 9 (Pie) ke atas
+        minSdk = 28 // Android 9.0 (Pie) ke atas
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
@@ -22,7 +24,7 @@ android {
 }
 
 dependencies {
-    // LSPosed API 102 Modern Standard
+    // LSPosed API 102 Modern Standard (compileOnly agar tidak konflik di runtime)
     compileOnly("org.lsposed.lsposed:api:1.0.2")
 
     // Jetpack Compose & Core AndroidX
@@ -33,6 +35,6 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
     
-    // Google Maps SDK untuk UI Interaktif
+    // Google Maps SDK untuk UI Pemilihan Lokasi
     implementation("com.google.android.gms:play-services-maps:19.0.0")
 }
