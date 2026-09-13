@@ -29,9 +29,12 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > app/aya-release.jks
 
-      - name: Build Release APK (unsigned)
+            - name: Build Release APK (signed via gradle)
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Suntikkan konfigurasi LSPosed Modern API ke APK
