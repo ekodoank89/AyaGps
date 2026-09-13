@@ -27,7 +27,7 @@
         <!-- >= 100 = Modern API; LSPosed yang support API 102 otomatis mengenali modul ini -->
         <meta-data
             android:name="xposedminversion"
-            android:value="100" />
+            android:value="102" />
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />
