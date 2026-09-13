@@ -52,10 +52,10 @@ android {
 }
 
 dependencies {
-    // ===== Xposed Modern API (LSPosed) =====
-    // Hanya stub waktu kompilasi — implementasi asli disediakan framework LSPosed
-    // di runtime, jadi tidak ikut ter-bundle ke APK (compileOnly).
-    compileOnly("io.github.libxposed:api:100")
+    // Xposed Modern API — stub kompilasi LOKAL. Jar dari :xposed-api-stub hanya
+    // dipakai saat kompilasi (compileOnly), tidak ikut ter-bundle ke APK.
+    // Kelas asli disediakan framework LSPosed saat modul di-load.
+    compileOnly(project(":xposed-api-stub"))
 
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.09.03"))
