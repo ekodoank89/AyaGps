@@ -25,9 +25,9 @@ class MapViewModel(
     private val _state = MutableStateFlow(MapUiState())
     val state: StateFlow<MapUiState> = _state.asStateFlow()
 
-    /** Event satu-shot (mis. target auto-focus kamera) */
-    private val _events = Channel<LocationData>(Channel.BUFFERED)
-    val events: Flow<LocationData> = _events.receiveAsFlow()
+    /** Perintah kamera satu-shot (auto-focus GPS / lompat ke marker A/B) */
+    private val _events = Channel<MapCameraEvent>(Channel.BUFFERED)
+    val events: Flow<MapCameraEvent> = _events.receiveAsFlow()
 
     init {
         // Pulihkan semua kondisi terakhir saat aplikasi dibuka ulang,
@@ -99,13 +99,28 @@ class MapViewModel(
                 mapStateRepository.saveCameraState(intent.camera)
             }
 
-            // Auto-focus: ambil posisi GPS terkini, kirim sebagai event kamera
+            // Auto-focus: ambil posisi GPS terkini, kirim sebagai perintah kamera
             MapIntent.FocusCurrentLocation -> viewModelScope.launch {
                 try {
-                    getCurrentLocation()?.let { _events.send(it) }
+                    getCurrentLocation()?.let { loc ->
+                        _events.send(MapCameraEvent.FlyTo(loc, FOCUS_ZOOM))
+                    }
                 } catch (_: SecurityException) {
                     // izin lokasi belum tersedia — abaikan
                 }
+            }
+
+            // Tap chip A/B: terbang ke posisi marker (zoom dipertahankan)
+            MapIntent.FocusPointA -> flyToPoint { it.pointA }
+            MapIntent.FocusPointB -> flyToPoint { it.pointB }
+        }
+    }
+
+    /** Kirim perintah kamera ke titik A/B jika aktif */
+    private fun flyToPoint(selector: (MapUiState) -> LocationData?) {
+        selector(_state.value)?.let { point ->
+            viewModelScope.launch {
+                _events.send(MapCameraEvent.FlyTo(point))
             }
         }
     }
