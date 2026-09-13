@@ -1,12 +1,12 @@
-def localProperties = new Properties()
-def localPropertiesFile = rootProject.file("local.properties")
-if (localPropertiesFile.exists()) {
-    localProperties.load(new FileInputStream(localPropertiesFile))
-}
-
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
 }
 
 android {
@@ -24,10 +24,13 @@ android {
 
     signingConfigs {
         release {
-            storeFile file('../keystore.jks')
-            storePassword localProperties.getProperty('KEYSTORE_PASSWORD')
-            keyAlias localProperties.getProperty('KEY_ALIAS')
-            keyPassword localProperties.getProperty('KEY_PASSWORD')
+            def keystoreFile = file('../keystore.jks')
+            if (keystoreFile.exists()) {
+                storeFile keystoreFile
+                storePassword localProperties.getProperty('KEYSTORE_PASSWORD')
+                keyAlias localProperties.getProperty('KEY_ALIAS')
+                keyPassword localProperties.getProperty('KEY_PASSWORD')
+            }
         }
     }
 
