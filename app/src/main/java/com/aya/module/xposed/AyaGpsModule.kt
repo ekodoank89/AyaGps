@@ -6,9 +6,7 @@ import io.github.libxposed.api.XposedModuleInterface
 
 /**
  * Entry point Xposed (Modern API).
- *
- * Kelas ini TIDAK berjalan di aplikasi AyaGps sendiri — dia di-load oleh
- * framework LSPosed ke dalam proses aplikasi target yang dipilih di scope.
+ * TIDAK berjalan di aplikasi AyaGps — di-load LSPosed ke proses aplikasi target.
  */
 class AyaGpsModule(
     base: XposedInterface,
@@ -19,7 +17,6 @@ class AyaGpsModule(
         log("AyaGps: module loaded (Modern API)")
     }
 
-    /** Dipanggil saat proses aplikasi target selesai load package-nya */
     override fun onPackageLoaded(param: XposedModuleInterface.PackageLoadedParam) {
         super.onPackageLoaded(param)
         log("AyaGps: injected into ${param.packageName}")
