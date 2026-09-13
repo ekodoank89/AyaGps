@@ -1,9 +1,6 @@
 package io.github.libxposed.api;
 
-/**
- * STUB kompilasi dari kelas dasar modul libxposed Modern API.
- * Signature mengikuti API asli; isi metode tidak pernah dieksekusi di sini.
- */
+/** STUB kompilasi dari kelas dasar modul libxposed Modern API. */
 public abstract class XposedModule implements XposedModuleInterface {
 
     private final XposedInterface base;
