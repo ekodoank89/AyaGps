@@ -1,7 +1,9 @@
 package com.aya.module.data.repository
 
 import android.content.Context
+import android.content.SharedPreferences
 import com.aya.module.domain.model.FavoritePoint
+import com.aya.module.domain.model.JitterConfig
 import com.aya.module.domain.model.LocationData
 import com.aya.module.domain.model.PanelOffset
 import com.aya.module.domain.model.SavedCameraState
@@ -21,17 +23,16 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         // commit() (bukan apply()) + Dispatchers.IO agar benar-benar tersimpan ke disk
         // meskipun aplikasi langsung di-force stop setelah tombol ditekan
         withContext(Dispatchers.IO) {
-            prefs.edit()
-                .putBoolean(KEY_ACTIVE_A, state.isActiveA)
-                .putString(KEY_LAT_A, state.pointA?.latitude?.toString())
-                .putString(KEY_LNG_A, state.pointA?.longitude?.toString())
-                .putBoolean(KEY_ACTIVE_B, state.isActiveB)
-                .putString(KEY_LAT_B, state.pointB?.latitude?.toString())
-                .putString(KEY_LNG_B, state.pointB?.longitude?.toString())
-                .putString(KEY_FAV_NAME, state.favorite?.name)
-                .putString(KEY_LAT_FAV, state.favorite?.location?.latitude?.toString())
-                .putString(KEY_LNG_FAV, state.favorite?.location?.longitude?.toString())
-                .commit()
+            val editor = prefs.edit()
+            editor.putBoolean(KEY_ACTIVE_A, state.isActiveA)
+            editor.putString(KEY_LAT_A, state.pointA?.latitude?.toString())
+            editor.putString(KEY_LNG_A, state.pointA?.longitude?.toString())
+            editor.putBoolean(KEY_ACTIVE_B, state.isActiveB)
+            editor.putString(KEY_LAT_B, state.pointB?.latitude?.toString())
+            editor.putString(KEY_LNG_B, state.pointB?.longitude?.toString())
+            putFavorites(editor, PREFIX_FAV_A, state.favoritesA)
+            putFavorites(editor, PREFIX_FAV_B, state.favoritesB)
+            editor.commit()
         }
     }
 
@@ -41,9 +42,40 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
             pointA = readPoint(KEY_LAT_A, KEY_LNG_A),
             isActiveB = prefs.getBoolean(KEY_ACTIVE_B, false),
             pointB = readPoint(KEY_LAT_B, KEY_LNG_B),
-            favorite = readFavorite()
+            favoritesA = readFavorites(PREFIX_FAV_A),
+            favoritesB = readFavorites(PREFIX_FAV_B)
         )
     }
+
+    // ===== Serialisasi daftar favorit (index keys, aman terhadap duplikat nama) =====
+
+    private fun putFavorites(
+        editor: SharedPreferences.Editor,
+        prefix: String,
+        list: List<FavoritePoint>
+    ) {
+        // Bersihkan entri lama (jumlah bisa berkurang)
+        val oldCount = prefs.getInt("${prefix}_count", 0)
+        for (i in 0 until oldCount) editor.remove("${prefix}_$i")
+        editor.putInt("${prefix}_count", list.size)
+        list.forEachIndexed { i, fav ->
+            editor.putString("${prefix}_${i}_name", fav.name)
+            editor.putString("${prefix}_${i}_lat", fav.location.latitude.toString())
+            editor.putString("${prefix}_${i}_lng", fav.location.longitude.toString())
+        }
+    }
+
+    private fun readFavorites(prefix: String): List<FavoritePoint> {
+        val count = prefs.getInt("${prefix}_count", 0)
+        return (0 until count).mapNotNull { i ->
+            val name = prefs.getString("${prefix}_${i}_name", null) ?: return@mapNotNull null
+            val loc = readPoint("${prefix}_${i}_lat", "${prefix}_${i}_lng")
+                ?: return@mapNotNull null
+            FavoritePoint(name = name, location = loc)
+        }
+    }
+
+    // ===== Lock panel =====
 
     override suspend fun savePanelLocks(state: SavedPanelLocks) {
         withContext(Dispatchers.IO) {
@@ -60,6 +92,8 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
             zoomLocked = prefs.getBoolean(KEY_ZOOM_LOCKED, false)
         )
     }
+
+    // ===== Posisi drag panel =====
 
     override suspend fun savePanelOffsets(state: SavedPanelOffsets) {
         withContext(Dispatchers.IO) {
@@ -84,6 +118,8 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         }
     }
 
+    // ===== Posisi kamera/pin =====
+
     override suspend fun saveCameraState(state: SavedCameraState) {
         withContext(Dispatchers.IO) {
             prefs.edit()
@@ -106,6 +142,8 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         )
     }
 
+    // ===== Jitter =====
+
     override suspend fun saveJitter(state: SavedJitterState) {
         withContext(Dispatchers.IO) {
             prefs.edit()
@@ -127,12 +165,12 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
 
     override suspend fun loadJitter(): SavedJitterState = withContext(Dispatchers.IO) {
         SavedJitterState(
-            configA = com.aya.module.domain.model.JitterConfig(
+            configA = JitterConfig(
                 stepMeters = prefs.getFloat(KEY_JITTER_STEP_A, 3f),
                 intervalSeconds = prefs.getInt(KEY_JITTER_INTERVAL_A, 5),
                 radiusMeters = prefs.getFloat(KEY_JITTER_RADIUS_A, 4f)
             ),
-            configB = com.aya.module.domain.model.JitterConfig(
+            configB = JitterConfig(
                 stepMeters = prefs.getFloat(KEY_JITTER_STEP_B, 3f),
                 intervalSeconds = prefs.getInt(KEY_JITTER_INTERVAL_B, 5),
                 radiusMeters = prefs.getFloat(KEY_JITTER_RADIUS_B, 4f)
@@ -144,16 +182,12 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         )
     }
 
+    // ===== Helper =====
+
     private fun readPoint(latKey: String, lngKey: String): LocationData? {
         val lat = prefs.getString(latKey, null)?.toDoubleOrNull() ?: return null
         val lng = prefs.getString(lngKey, null)?.toDoubleOrNull() ?: return null
         return LocationData(latitude = lat, longitude = lng)
-    }
-
-    private fun readFavorite(): FavoritePoint? {
-        val name = prefs.getString(KEY_FAV_NAME, null) ?: return null
-        val location = readPoint(KEY_LAT_FAV, KEY_LNG_FAV) ?: return null
-        return FavoritePoint(name = name, location = location)
     }
 
     private fun readOffset(xKey: String, yKey: String): PanelOffset = PanelOffset(
@@ -169,9 +203,8 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         const val KEY_ACTIVE_B = "active_b"
         const val KEY_LAT_B = "lat_b"
         const val KEY_LNG_B = "lng_b"
-        const val KEY_FAV_NAME = "fav_name"
-        const val KEY_LAT_FAV = "lat_fav"
-        const val KEY_LNG_FAV = "lng_fav"
+        const val PREFIX_FAV_A = "fav_a"
+        const val PREFIX_FAV_B = "fav_b"
         const val KEY_TRACK_LOCKED = "track_panel_locked"
         const val KEY_ZOOM_LOCKED = "zoom_panel_locked"
         const val KEY_TRACK_OFF_X = "track_off_x"
