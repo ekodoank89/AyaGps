@@ -86,7 +86,6 @@ import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.MarkerComposable
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -177,11 +176,13 @@ fun MapScreen() {
         DraggablePanel(
             anchor = PanelAnchor.BottomCenter,
             anchorPadding = 40.dp,
+            isLocked = state.isTrackPanelLocked,
+            onToggleLock = { viewModel.onIntent(MapIntent.ToggleTrackPanelLock) },
             modifier = Modifier.zIndex(2f)
-        ) { locked, toggleLock ->
+        ) {
             TrackPanelContent(
-                isLocked = locked,
-                onToggleLock = toggleLock,
+                isLocked = state.isTrackPanelLocked,
+                onToggleLock = { viewModel.onIntent(MapIntent.ToggleTrackPanelLock) },
                 isActiveA = state.isActiveA,
                 isActiveB = state.isActiveB,
                 onToggleA = { viewModel.onIntent(MapIntent.ToggleA(currentPin())) },
@@ -193,11 +194,13 @@ fun MapScreen() {
         DraggablePanel(
             anchor = PanelAnchor.CenterEnd,
             anchorPadding = 16.dp,
+            isLocked = state.isZoomPanelLocked,
+            onToggleLock = { viewModel.onIntent(MapIntent.ToggleZoomPanelLock) },
             modifier = Modifier.zIndex(2f)
-        ) { locked, toggleLock ->
+        ) {
             ZoomPanelContent(
-                isLocked = locked,
-                onToggleLock = toggleLock,
+                isLocked = state.isZoomPanelLocked,
+                onToggleLock = { viewModel.onIntent(MapIntent.ToggleZoomPanelLock) },
                 onFocus = { viewModel.onIntent(MapIntent.FocusCurrentLocation) },
                 onZoomIn = {
                     scope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomTo(MAX_ZOOM)) }
@@ -421,17 +424,17 @@ private fun PointChip(
 }
 
 // ================== PANEL BISA DIGESER (GENERIC) ==================
-// Satu implementasi untuk semua panel: state lock independen per panel,
-// posisi awal sesuai anchor, clamp tetap di dalam layar, posisi tersimpan saat rotasi.
+// State lock di-hoist ke ViewModel (dipersistenkan ke disk, bertahan force stop).
 
 @Composable
 private fun DraggablePanel(
     anchor: PanelAnchor,
     anchorPadding: Dp,
+    isLocked: Boolean,
+    onToggleLock: () -> Unit,
     modifier: Modifier = Modifier,
-    content: @Composable (isLocked: Boolean, onToggleLock: () -> Unit) -> Unit
+    content: @Composable () -> Unit
 ) {
-    var isLocked by rememberSaveable { mutableStateOf(false) }
     var isDragging by remember { mutableStateOf(false) }
     var dragOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
     var panelSize by remember { mutableStateOf(IntSize.Zero) }
@@ -506,7 +509,7 @@ private fun DraggablePanel(
                     } else Modifier
                 )
         ) {
-            content(isLocked) { isLocked = !isLocked }
+            content()
         }
     }
 }
