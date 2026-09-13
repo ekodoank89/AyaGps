@@ -1,9 +1,6 @@
 package io.github.libxposed.api;
 
-/**
- * STUB kompilasi — implementasi asli disediakan framework LSPosed saat runtime.
- * Stub TIDAK ikut ter-bundle ke APK (compileOnly).
- */
+/** STUB kompilasi — implementasi asli disediakan framework LSPosed saat runtime. */
 public interface XposedInterface {
 
     void log(String text);
