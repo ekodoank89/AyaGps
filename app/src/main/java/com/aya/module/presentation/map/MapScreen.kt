@@ -712,9 +712,8 @@ private fun FavoriteDialog(
                 )
                 if (tab == 0) {
                     // Otomatis dari koordinat pin (read-only)
-                    OutlinedTextField(
+                                        OutlinedTextField(
                         value = String.format(Locale.US, "%.6f", pin.latitude),
-                        onValueChange = {},
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("Latitude (dari pin)") },
