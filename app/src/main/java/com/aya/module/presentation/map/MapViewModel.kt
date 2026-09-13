@@ -3,7 +3,6 @@ package com.aya.module.presentation.map
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aya.module.domain.model.FavoritePoint
-import com.aya.module.domain.model.JitterConfig
 import com.aya.module.domain.model.LocationData
 import com.aya.module.domain.model.SavedJitterState
 import com.aya.module.domain.model.SavedPanelLocks
@@ -15,13 +14,13 @@ import com.aya.module.domain.usecase.GetCurrentLocationUseCase
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.cos
@@ -37,7 +36,7 @@ class MapViewModel(
     private val _state = MutableStateFlow(MapUiState())
     val state: StateFlow<MapUiState> = _state.asStateFlow()
 
-    /** Perintah kamera satu-shot (auto-focus GPS / lompat ke marker) */
+    /** Perintah kamera satu-shot (auto-focus GPS / lompat ke titik) */
     private val _events = Channel<MapCameraEvent>(Channel.BUFFERED)
     val events: Flow<MapCameraEvent> = _events.receiveAsFlow()
 
@@ -59,7 +58,8 @@ class MapViewModel(
                     pointA = points.pointA,
                     isActiveB = points.isActiveB,
                     pointB = points.pointB,
-                    favorite = points.favorite,
+                    favoritesA = points.favoritesA,
+                    favoritesB = points.favoritesB,
                     jitterConfigA = jitter.configA,
                     jitterConfigB = jitter.configB,
                     isJitterActiveA = jitter.isActiveA && points.pointA != null,
@@ -74,8 +74,8 @@ class MapViewModel(
                 )
             }
             // Lanjutkan jitter yang tertunda saat aplikasi dimatikan
-            if (_state.value.isJitterActiveA) startJitterJob(JitterTarget.A)
-            if (_state.value.isJitterActiveB) startJitterJob(JitterTarget.B)
+            if (_state.value.isJitterActiveA) startJitterJob(PointCategory.A)
+            if (_state.value.isJitterActiveB) startJitterJob(PointCategory.B)
         }
     }
 
@@ -84,47 +84,52 @@ class MapViewModel(
             MapIntent.PermissionGranted -> _state.update { it.copy(hasPermission = true) }
             MapIntent.PermissionDenied -> _state.update { it.copy(hasPermission = false) }
 
-            // Play: simpan koordinat pin. Stop: hapus titik + hentikan jitter terkait.
-            is MapIntent.ToggleA -> {
-                val wasActive = _state.value.isActiveA
-                if (wasActive) stopJitterInternal(JitterTarget.A)
-                _state.update {
-                    if (it.isActiveA) it.copy(isActiveA = false, pointA = null)
-                    else it.copy(isActiveA = true, pointA = intent.pinLocation)
-                }
-                persistPoints()
-                if (wasActive) persistJitter()
-            }
-            is MapIntent.ToggleB -> {
-                val wasActive = _state.value.isActiveB
-                if (wasActive) stopJitterInternal(JitterTarget.B)
-                _state.update {
-                    if (it.isActiveB) it.copy(isActiveB = false, pointB = null)
-                    else it.copy(isActiveB = true, pointB = intent.pinLocation)
-                }
-                persistPoints()
-                if (wasActive) persistJitter()
-            }
+            // Play/Stop: jitter otomatis ikut aktif/berhenti
+            is MapIntent.ToggleA -> togglePlay(PointCategory.A, intent.pinLocation)
+            is MapIntent.ToggleB -> togglePlay(PointCategory.B, intent.pinLocation)
 
-            // Favorite: simpan/ganti/hapus (persisten)
+            // Favorite: tambah baru (index null) atau edit
             is MapIntent.SaveFavorite -> {
-                _state.update {
-                    it.copy(favorite = FavoritePoint(intent.name, intent.location))
+                _state.update { s ->
+                    val current =
+                        if (intent.category == PointCategory.A) s.favoritesA else s.favoritesB
+                    val updated = current.toMutableList().apply {
+                        val idx = intent.index
+                        if (idx != null && idx >= 0 && idx < size) {
+                            set(idx, FavoritePoint(intent.name, intent.location))
+                        } else {
+                            add(FavoritePoint(intent.name, intent.location))
+                        }
+                    }
+                    if (intent.category == PointCategory.A) s.copy(favoritesA = updated)
+                    else s.copy(favoritesB = updated)
                 }
                 persistPoints()
             }
-            MapIntent.DeleteFavorite -> {
-                _state.update { it.copy(favorite = null) }
+
+            is MapIntent.DeleteFavorite -> {
+                _state.update { s ->
+                    val current =
+                        if (intent.category == PointCategory.A) s.favoritesA else s.favoritesB
+                    val updated = current.toMutableList().apply {
+                        if (intent.index >= 0 && intent.index < size) removeAt(intent.index)
+                    }
+                    if (intent.category == PointCategory.A) s.copy(favoritesA = updated)
+                    else s.copy(favoritesB = updated)
+                }
                 persistPoints()
             }
 
-            // Jitter: mulai/hentikan gerak acak untuk target
+            // Tap nama favorit: terbang + play kategori terkait (jitter otomatis)
+            is MapIntent.PlayFavorite -> playFavorite(intent.category, intent.index)
+
+            // Jitter manual (switch di dialog)
             is MapIntent.ToggleJitter -> toggleJitter(intent.target)
 
-            // Ubah setelan jitter (berlaku di tick berikutnya); simpan dengan debounce
+            // Ubah setelan jitter; simpan dengan debounce
             is MapIntent.UpdateJitterConfig -> {
                 _state.update {
-                    if (intent.target == JitterTarget.A) it.copy(jitterConfigA = intent.config)
+                    if (intent.target == PointCategory.A) it.copy(jitterConfigA = intent.config)
                     else it.copy(jitterConfigB = intent.config)
                 }
                 persistJitterDebounced()
@@ -169,7 +174,6 @@ class MapViewModel(
             // Tap chip: terbang ke posisi marker (zoom dipertahankan)
             MapIntent.FocusPointA -> flyToPoint { it.pointA }
             MapIntent.FocusPointB -> flyToPoint { it.pointB }
-            MapIntent.FocusFavorite -> flyToPoint { it.favorite?.location }
         }
     }
 
@@ -182,33 +186,81 @@ class MapViewModel(
         }
     }
 
-    // ================== JITTER (GERAK ACAK) ==================
+    // ================== PLAY / STOP (jitter otomatis) ==================
 
-    private fun toggleJitter(target: JitterTarget) {
-        val isActiveNow = when (target) {
-            JitterTarget.A -> _state.value.isJitterActiveA
-            JitterTarget.B -> _state.value.isJitterActiveB
-        }
-        if (isActiveNow) {
-            stopJitterInternal(target)
-            persistJitter()
-        } else {
-            // Titik dasar = posisi titik saat jitter diaktifkan (hasil play dari pin)
-            val base = when (target) {
-                JitterTarget.A -> _state.value.pointA
-                JitterTarget.B -> _state.value.pointB
-            } ?: return // titik belum di-play — abaikan
+    private fun togglePlay(category: PointCategory, pin: LocationData) {
+        val wasActive =
+            if (category == PointCategory.A) _state.value.isActiveA else _state.value.isActiveB
+        if (wasActive) {
+            stopJitterInternal(category)
             _state.update {
-                if (target == JitterTarget.A) it.copy(isJitterActiveA = true, jitterBaseA = base)
-                else it.copy(isJitterActiveB = true, jitterBaseB = base)
+                if (category == PointCategory.A) it.copy(isActiveA = false, pointA = null)
+                else it.copy(isActiveB = false, pointB = null)
             }
-            startJitterJob(target)
-            persistJitter()
+        } else {
+            // Jitter otomatis aktif saat play, basis = titik play
+            _state.update {
+                if (category == PointCategory.A) it.copy(
+                    isActiveA = true, pointA = pin,
+                    isJitterActiveA = true, jitterBaseA = pin
+                )
+                else it.copy(
+                    isActiveB = true, pointB = pin,
+                    isJitterActiveB = true, jitterBaseB = pin
+                )
+            }
+            startJitterJob(category)
+        }
+        persistPoints()
+        persistJitter()
+    }
+
+    private fun playFavorite(category: PointCategory, index: Int) {
+        val s = _state.value
+        val fav = (if (category == PointCategory.A) s.favoritesA else s.favoritesB)
+            .getOrNull(index) ?: return
+        stopJitterInternal(category)
+        _state.update {
+            if (category == PointCategory.A) it.copy(
+                isActiveA = true, pointA = fav.location,
+                isJitterActiveA = true, jitterBaseA = fav.location
+            )
+            else it.copy(
+                isActiveB = true, pointB = fav.location,
+                isJitterActiveB = true, jitterBaseB = fav.location
+            )
+        }
+        startJitterJob(category)
+        persistPoints()
+        persistJitter()
+        viewModelScope.launch {
+            _events.send(MapCameraEvent.FlyTo(fav.location))
         }
     }
 
-    private fun stopJitterInternal(target: JitterTarget) {
-        if (target == JitterTarget.A) {
+    // ================== JITTER (GERAK ACAK) ==================
+
+    private fun toggleJitter(category: PointCategory) {
+        val activeNow =
+            if (category == PointCategory.A) _state.value.isJitterActiveA
+            else _state.value.isJitterActiveB
+        if (activeNow) {
+            stopJitterInternal(category)
+        } else {
+            val base = if (category == PointCategory.A) _state.value.pointA
+            else _state.value.pointB
+            base ?: return // titik belum di-play — abaikan
+            _state.update {
+                if (category == PointCategory.A) it.copy(isJitterActiveA = true, jitterBaseA = base)
+                else it.copy(isJitterActiveB = true, jitterBaseB = base)
+            }
+            startJitterJob(category)
+        }
+        persistJitter()
+    }
+
+    private fun stopJitterInternal(category: PointCategory) {
+        if (category == PointCategory.A) {
             jitterJobA?.cancel()
             jitterJobA = null
             _state.update { it.copy(isJitterActiveA = false, jitterBaseA = null) }
@@ -224,17 +276,17 @@ class MapViewModel(
      * selalu dijaga tetap dalam `radius` dari titik dasar.
      * Setelan dibaca ulang tiap tick sehingga perubahan slider langsung berlaku.
      */
-    private fun startJitterJob(target: JitterTarget) {
+    private fun startJitterJob(category: PointCategory) {
         val job = viewModelScope.launch {
-            val base = (if (target == JitterTarget.A) _state.value.jitterBaseA
+            val base = (if (category == PointCategory.A) _state.value.jitterBaseA
             else _state.value.jitterBaseB) ?: return@launch
             var offX = 0.0
             var offY = 0.0
             while (isActive) {
-                val config = if (target == JitterTarget.A) _state.value.jitterConfigA
+                val config = if (category == PointCategory.A) _state.value.jitterConfigA
                 else _state.value.jitterConfigB
                 delay(config.intervalSeconds * 1000L)
-                val stillActive = if (target == JitterTarget.A) _state.value.isJitterActiveA
+                val stillActive = if (category == PointCategory.A) _state.value.isJitterActiveA
                 else _state.value.isJitterActiveB
                 if (!stillActive) break
 
@@ -252,17 +304,16 @@ class MapViewModel(
                 offY = ny
                 val newPos = base.offsetByMeters(offX, offY)
                 _state.update {
-                    if (target == JitterTarget.A) it.copy(pointA = newPos)
+                    if (category == PointCategory.A) it.copy(pointA = newPos)
                     else it.copy(pointB = newPos)
                 }
             }
         }
-        if (target == JitterTarget.A) jitterJobA = job else jitterJobB = job
+        if (category == PointCategory.A) jitterJobA = job else jitterJobB = job
     }
 
     // ================== PERSISTENSI ==================
 
-    /** Simpan kondisi A/B + favorit ke disk setiap kali berubah */
     private fun persistPoints() {
         val s = _state.value
         viewModelScope.launch {
@@ -272,7 +323,8 @@ class MapViewModel(
                     pointA = s.pointA,
                     isActiveB = s.isActiveB,
                     pointB = s.pointB,
-                    favorite = s.favorite
+                    favoritesA = s.favoritesA,
+                    favoritesB = s.favoritesB
                 )
             )
         }
