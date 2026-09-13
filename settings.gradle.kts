@@ -13,5 +13,8 @@ dependencyResolutionManagement {
     }
 }
 
+// Menamai project utama kita
 rootProject.name = "HOTSPOT"
+
+// Mendaftarkan folder 'app' sebagai modul Android executable
 include(":app")
