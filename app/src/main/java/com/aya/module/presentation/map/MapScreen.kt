@@ -12,7 +12,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -27,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -122,6 +125,10 @@ fun MapScreen() {
     Box(modifier = Modifier.fillMaxSize()) {
         MapContent(
             hasPermission = state.hasPermission,
+            isTrackingA = state.isTrackingA,
+            isTrackingB = state.isTrackingB,
+            lastA = state.trackA.lastOrNull(),
+            lastB = state.trackB.lastOrNull(),
             trackA = state.trackA,
             trackB = state.trackB
         )
@@ -141,6 +148,10 @@ fun MapScreen() {
 @Composable
 private fun MapContent(
     hasPermission: Boolean,
+    isTrackingA: Boolean,
+    isTrackingB: Boolean,
+    lastA: LocationData?,
+    lastB: LocationData?,
     trackA: List<LocationData>,
     trackB: List<LocationData>
 ) {
@@ -184,37 +195,117 @@ private fun MapContent(
                 .offset(y = (-24).dp)
         )
 
-        // ---- CHIP KOORDINAT (kiri atas) ----
-        Surface(
+        // ---- KOLOM CHIP (kiri atas): koordinat tengah + chip A + chip B ----
+        Column(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
                 .padding(16.dp),
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 3.dp,
-            shadowElevation = 6.dp
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // Chip koordinat titik tengah peta
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp,
+                shadowElevation = 6.dp
             ) {
-                Icon(
-                    imageVector = Icons.Filled.MyLocation,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MyLocation,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = String.format(
+                            Locale.US, "%.6f, %.6f", center.latitude, center.longitude
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Chip rekaman A — tampil hanya saat merekam
+            if (isTrackingA) {
+                TrackingChip(label = "A", accent = TrackAColor, location = lastA)
+            }
+
+            // Chip rekaman B — tampil hanya saat merekam
+            if (isTrackingB) {
+                TrackingChip(label = "B", accent = TrackBColor, location = lastB)
+            }
+        }
+    }
+}
+
+/**
+ * Chip rekaman: titik merah berkedip + badge huruf + koordinat terakhir yang direkam.
+ * Otomatis hilang saat tracking dihentikan (dikontrol lewat if (isTracking...) di pemanggil).
+ */
+@Composable
+private fun TrackingChip(
+    label: String,
+    accent: Color,
+    location: LocationData?
+) {
+    // Kedipan titik rekam
+    val recTransition = rememberInfiniteTransition(label = "rec")
+    val recAlpha by recTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "recAlpha"
+    )
+
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.FiberManualRecord,
+                contentDescription = "Sedang merekam",
+                tint = PinRed.copy(alpha = recAlpha),
+                modifier = Modifier.size(10.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .background(accent, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
-                    text = String.format(
-                        Locale.US, "%.6f, %.6f", center.latitude, center.longitude
-                    ),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold
+                    text = label,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
                 )
             }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = location?.let {
+                    String.format(Locale.US, "%.6f, %.6f", it.latitude, it.longitude)
+                } ?: "Menunggu GPS…",
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
