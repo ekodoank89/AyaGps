@@ -14,12 +14,14 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -28,6 +30,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -36,15 +39,24 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -67,10 +79,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -79,6 +94,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aya.module.AyaGpsApp
+import com.aya.module.domain.model.FavoritePoint
+import com.aya.module.domain.model.JitterConfig
 import com.aya.module.domain.model.LocationData
 import com.aya.module.domain.model.PanelOffset
 import com.aya.module.domain.model.SavedCameraState
@@ -94,6 +111,7 @@ import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 private val PERMISSIONS = arrayOf(
     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -105,8 +123,9 @@ private val STANDARD_ZOOM = 16f
 private val MAX_ZOOM = 20f
 
 private val PinRed = Color(0xFFE53935)
-private val TrackAColor = Color(0xFF1E88E5) // biru
-private val TrackBColor = Color(0xFFFB8C00) // oranye
+private val TrackAColor = Color(0xFF1E88E5)      // biru
+private val TrackBColor = Color(0xFFFB8C00)      // oranye
+private val FavoriteGold = Color(0xFFF9A825)     // emas
 
 /** Titik jangkar awal panel */
 private enum class PanelAnchor { BottomCenter, CenterEnd }
@@ -156,7 +175,7 @@ fun MapScreen() {
     }
 
     // Perintah kamera satu-shot: auto-focus GPS (zoom FOCUS_ZOOM)
-    // dan lompat ke marker A/B (zoom saat ini dipertahankan)
+    // dan lompat ke marker (zoom saat ini dipertahankan)
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
@@ -173,8 +192,7 @@ fun MapScreen() {
         }
     }
 
-    // Simpan posisi kamera/pin terakhir saat aplikasi ditinggalkan
-    // (home, layar mati, buka recents) — menjamin data tersimpan sebelum force stop
+    // Simpan posisi kamera/pin terakhir saat aplikasi ditinggalkan (ON_PAUSE)
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -201,6 +219,11 @@ fun MapScreen() {
         LocationData(latitude = target.latitude, longitude = target.longitude)
     }
 
+    // State dialog (transien — tidak perlu persisten)
+    var showFavoriteDialog by remember { mutableStateOf(false) }
+    var favoriteDialogPin by remember { mutableStateOf<LocationData?>(null) }
+    var showJitterDialog by remember { mutableStateOf(false) }
+
     Box(modifier = Modifier.fillMaxSize()) {
         MapContent(
             hasPermission = state.hasPermission,
@@ -209,11 +232,15 @@ fun MapScreen() {
             pointB = state.pointB,
             isActiveA = state.isActiveA,
             isActiveB = state.isActiveB,
+            isJitterActiveA = state.isJitterActiveA,
+            isJitterActiveB = state.isJitterActiveB,
+            favorite = state.favorite,
             onFocusA = { viewModel.onIntent(MapIntent.FocusPointA) },
-            onFocusB = { viewModel.onIntent(MapIntent.FocusPointB) }
+            onFocusB = { viewModel.onIntent(MapIntent.FocusPointB) },
+            onFavoriteClick = { viewModel.onIntent(MapIntent.FocusFavorite) }
         )
 
-        // ===== PANEL 1: A / lock / B (default bawah-tengah) =====
+        // ===== PANEL 1: A / B / lock / Fav / Jitter (default bawah-tengah) =====
         DraggablePanel(
             anchor = PanelAnchor.BottomCenter,
             anchorPadding = 40.dp,
@@ -229,9 +256,16 @@ fun MapScreen() {
                 isLocked = state.isTrackPanelLocked,
                 onToggleLock = { viewModel.onIntent(MapIntent.ToggleTrackPanelLock) },
                 isActiveA = state.isActiveA,
-                isActiveB = state.isActiveB,
                 onToggleA = { viewModel.onIntent(MapIntent.ToggleA(currentPin())) },
-                onToggleB = { viewModel.onIntent(MapIntent.ToggleB(currentPin())) }
+                isActiveB = state.isActiveB,
+                onToggleB = { viewModel.onIntent(MapIntent.ToggleB(currentPin())) },
+                isFavoriteActive = state.favorite != null,
+                onFavorite = {
+                    favoriteDialogPin = currentPin()
+                    showFavoriteDialog = true
+                },
+                isJitterActive = state.isJitterActiveA || state.isJitterActiveB,
+                onJitter = { showJitterDialog = true }
             )
         }
 
@@ -259,6 +293,47 @@ fun MapScreen() {
                 }
             )
         }
+
+        // ===== DIALOG FAVORIT =====
+        val dialogPin = favoriteDialogPin
+        if (showFavoriteDialog && dialogPin != null) {
+            FavoriteDialog(
+                pin = dialogPin,
+                existing = state.favorite,
+                onDismiss = { showFavoriteDialog = false },
+                onSaveFromPin = { name ->
+                    viewModel.onIntent(MapIntent.SaveFavorite(name, dialogPin))
+                    showFavoriteDialog = false
+                },
+                onSaveManual = { name, lat, lng ->
+                    viewModel.onIntent(MapIntent.SaveFavorite(name, LocationData(lat, lng)))
+                    showFavoriteDialog = false
+                },
+                onDelete = {
+                    viewModel.onIntent(MapIntent.DeleteFavorite)
+                    showFavoriteDialog = false
+                }
+            )
+        }
+
+        // ===== DIALOG JITTER =====
+        if (showJitterDialog) {
+            JitterDialog(
+                configA = state.jitterConfigA,
+                configB = state.jitterConfigB,
+                isPointActiveA = state.isActiveA,
+                isPointActiveB = state.isActiveB,
+                isJitterActiveA = state.isJitterActiveA,
+                isJitterActiveB = state.isJitterActiveB,
+                onUpdateConfig = { target, config ->
+                    viewModel.onIntent(MapIntent.UpdateJitterConfig(target, config))
+                },
+                onToggleJitter = { target ->
+                    viewModel.onIntent(MapIntent.ToggleJitter(target))
+                },
+                onDismiss = { showJitterDialog = false }
+            )
+        }
     }
 }
 
@@ -272,8 +347,12 @@ private fun MapContent(
     pointB: LocationData?,
     isActiveA: Boolean,
     isActiveB: Boolean,
+    isJitterActiveA: Boolean,
+    isJitterActiveB: Boolean,
+    favorite: FavoritePoint?,
     onFocusA: () -> Unit,
-    onFocusB: () -> Unit
+    onFocusB: () -> Unit,
+    onFavoriteClick: () -> Unit
 ) {
     /** Titik tengah peta = posisi pin */
     val center: LatLng = cameraPositionState.position.target
@@ -296,7 +375,7 @@ private fun MapContent(
                 mapToolbarEnabled = false
             )
         ) {
-            // Marker A — muncul saat play, hilang saat stop
+            // Marker A — ikut bergerak saat jitter aktif
             pointA?.let { p ->
                 MarkerComposable(
                     state = MarkerState(position = LatLng(p.latitude, p.longitude)),
@@ -311,7 +390,7 @@ private fun MapContent(
                 }
             }
 
-            // Marker B — muncul saat play, hilang saat stop
+            // Marker B — ikut bergerak saat jitter aktif
             pointB?.let { p ->
                 MarkerComposable(
                     state = MarkerState(position = LatLng(p.latitude, p.longitude)),
@@ -321,6 +400,23 @@ private fun MapContent(
                         imageVector = Icons.Filled.LocationOn,
                         contentDescription = "Marker B",
                         tint = TrackBColor,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+            }
+
+            // Marker favorit (bintang emas)
+            favorite?.let { fav ->
+                MarkerComposable(
+                    state = MarkerState(
+                        position = LatLng(fav.location.latitude, fav.location.longitude)
+                    ),
+                    title = fav.name
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = "Marker Favorit",
+                        tint = FavoriteGold,
                         modifier = Modifier.size(40.dp)
                     )
                 }
@@ -338,12 +434,14 @@ private fun MapContent(
                 .offset(y = (-24).dp)
         )
 
-        // ---- CHIP KOORDINAT PIN (ATAS TENGAH) — TAP untuk hide/unhide ----
-        Box(
+        // ---- CHIP ATAS TENGAH: pin + favorit di bawahnya ----
+        Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(16.dp)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (isPinChipVisible) {
                 Surface(
@@ -368,7 +466,6 @@ private fun MapContent(
                     }
                 }
             } else {
-                // Chip tersembunyi — tersisa ikon mata tertutup, TAP untuk tampilkan lagi
                 Surface(
                     onClick = { isPinChipVisible = true },
                     shape = CircleShape,
@@ -386,9 +483,14 @@ private fun MapContent(
                     )
                 }
             }
+
+            // Chip favorit — TAP untuk terbang ke marker favorit
+            favorite?.let { fav ->
+                FavoriteChip(favorite = fav, onClick = onFavoriteClick)
+            }
         }
 
-        // ---- CHIP TITIK A (ATAS KIRI) — tampil saat A aktif, TAP = terbang ke marker A ----
+        // ---- CHIP TITIK A (ATAS KIRI) ----
         if (isActiveA) {
             Box(
                 modifier = Modifier
@@ -396,11 +498,17 @@ private fun MapContent(
                     .statusBarsPadding()
                     .padding(16.dp)
             ) {
-                PointChip(label = "A", accent = TrackAColor, location = pointA, onClick = onFocusA)
+                PointChip(
+                    label = "A",
+                    accent = TrackAColor,
+                    location = pointA,
+                    isJitterActive = isJitterActiveA,
+                    onClick = onFocusA
+                )
             }
         }
 
-        // ---- CHIP TITIK B (ATAS KANAN) — tampil saat B aktif, TAP = terbang ke marker B ----
+        // ---- CHIP TITIK B (ATAS KANAN) ----
         if (isActiveB) {
             Box(
                 modifier = Modifier
@@ -408,7 +516,13 @@ private fun MapContent(
                     .statusBarsPadding()
                     .padding(16.dp)
             ) {
-                PointChip(label = "B", accent = TrackBColor, location = pointB, onClick = onFocusB)
+                PointChip(
+                    label = "B",
+                    accent = TrackBColor,
+                    location = pointB,
+                    isJitterActive = isJitterActiveB,
+                    onClick = onFocusB
+                )
             }
         }
     }
@@ -434,16 +548,13 @@ private fun CoordTwoLines(latitude: Double, longitude: Double) {
     }
 }
 
-/**
- * Chip titik A/B: badge huruf + indikator berkedip + koordinat 2 baris
- * (baris 1 latitude, baris 2 longitude). Bisa di-tap untuk menerbangkan
- * kamera ke marker terkait.
- */
+/** Chip titik A/B: badge + titik berkedip (+ label JITTER saat aktif) + koordinat 2 baris */
 @Composable
 private fun PointChip(
     label: String,
     accent: Color,
     location: LocationData?,
+    isJitterActive: Boolean,
     onClick: () -> Unit
 ) {
     val blinkTransition = rememberInfiniteTransition(label = "blink")
@@ -468,7 +579,6 @@ private fun PointChip(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Kolom indikator: titik berkedip di atas badge huruf
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
                     imageVector = Icons.Filled.FiberManualRecord,
@@ -490,6 +600,16 @@ private fun PointChip(
                         fontWeight = FontWeight.Bold
                     )
                 }
+                if (isJitterActive) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "JITTER",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent
+                    )
+                }
             }
             Spacer(Modifier.width(8.dp))
             if (location != null) {
@@ -506,9 +626,243 @@ private fun PointChip(
     }
 }
 
+/** Chip favorit: badge bintang emas + nama + koordinat 2 baris */
+@Composable
+private fun FavoriteChip(favorite: FavoritePoint, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .background(FavoriteGold, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Star,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(13.dp)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text(
+                    text = favorite.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                CoordTwoLines(
+                    latitude = favorite.location.latitude,
+                    longitude = favorite.location.longitude
+                )
+            }
+        }
+    }
+}
+
+// ================== DIALOG FAVORIT ==================
+
+@Composable
+private fun FavoriteDialog(
+    pin: LocationData,
+    existing: FavoritePoint?,
+    onDismiss: () -> Unit,
+    onSaveFromPin: (String) -> Unit,
+    onSaveManual: (String, Double, Double) -> Unit,
+    onDelete: () -> Unit
+) {
+    var tab by remember { mutableStateOf(0) } // 0 = dari pin, 1 = manual
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var latText by remember { mutableStateOf(existing?.location?.latitude?.toString() ?: "") }
+    var lngText by remember { mutableStateOf(existing?.location?.longitude?.toString() ?: "") }
+
+    val nameValid = name.isNotBlank()
+    val manualLat = latText.replace(',', '.').toDoubleOrNull()
+    val manualLng = lngText.replace(',', '.').toDoubleOrNull()
+    val manualValid = manualLat != null && manualLat in -90.0..90.0 &&
+            manualLng != null && manualLng in -180.0..180.0
+    val canSave = nameValid && (tab == 0 || manualValid)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "Tambah Favorit" else "Edit Favorit") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                TabRow(selectedTabIndex = tab) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Dari Pin") })
+                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Manual") })
+                }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nama favorit") },
+                    singleLine = true,
+                    isError = name.isNotEmpty() && !nameValid
+                )
+                if (tab == 0) {
+                    // Otomatis dari koordinat pin (read-only)
+                    OutlinedTextField(
+                        value = String.format(Locale.US, "%.6f", pin.latitude),
+                        onValueChange = {},
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Latitude (dari pin)") },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = String.format(Locale.US, "%.6f", pin.longitude),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Longitude (dari pin)") },
+                        singleLine = true
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = latText,
+                        onValueChange = { latText = it },
+                        label = { Text("Latitude (-90 s/d 90)") },
+                        singleLine = true,
+                        isError = latText.isNotEmpty() && manualLat == null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                    OutlinedTextField(
+                        value = lngText,
+                        onValueChange = { lngText = it },
+                        label = { Text("Longitude (-180 s/d 180)") },
+                        singleLine = true,
+                        isError = lngText.isNotEmpty() && manualLng == null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canSave,
+                onClick = {
+                    if (tab == 0) onSaveFromPin(name.trim())
+                    else onSaveManual(name.trim(), manualLat!!, manualLng!!)
+                }
+            ) { Text("Simpan") }
+        },
+        dismissButton = {
+            Row {
+                if (existing != null) {
+                    TextButton(onClick = onDelete) {
+                        Text("Hapus", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                TextButton(onClick = onDismiss) { Text("Batal") }
+            }
+        }
+    )
+}
+
+// ================== DIALOG JITTER ==================
+
+@Composable
+private fun JitterDialog(
+    configA: JitterConfig,
+    configB: JitterConfig,
+    isPointActiveA: Boolean,
+    isPointActiveB: Boolean,
+    isJitterActiveA: Boolean,
+    isJitterActiveB: Boolean,
+    onUpdateConfig: (JitterTarget, JitterConfig) -> Unit,
+    onToggleJitter: (JitterTarget) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var tab by remember { mutableStateOf(0) } // 0 = A, 1 = B
+    val target = if (tab == 0) JitterTarget.A else JitterTarget.B
+    val config = if (tab == 0) configA else configB
+    val pointActive = if (tab == 0) isPointActiveA else isPointActiveB
+    val jitterActive = if (tab == 0) isJitterActiveA else isJitterActiveB
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pergerakan Titik (Jitter)") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                TabRow(selectedTabIndex = tab) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Titik A") })
+                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Titik B") })
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Jitter ${target.name} aktif", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = jitterActive,
+                        enabled = pointActive,
+                        onCheckedChange = { onToggleJitter(target) }
+                    )
+                }
+                if (!pointActive) {
+                    Text(
+                        text = "Tekan Play ${target.name} terlebih dahulu untuk mengaktifkan jitter.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Langkah per jendela: ${config.stepMeters.roundToInt()} m",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = config.stepMeters,
+                    onValueChange = { onUpdateConfig(target, config.copy(stepMeters = it)) },
+                    valueRange = 1f..20f
+                )
+                Text(
+                    text = "Jendela (interval): ${config.intervalSeconds} detik",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = config.intervalSeconds.toFloat(),
+                    onValueChange = {
+                        onUpdateConfig(target, config.copy(intervalSeconds = it.roundToInt()))
+                    },
+                    valueRange = 1f..30f
+                )
+                Text(
+                    text = "Radius maksimal: ${config.radiusMeters.roundToInt()} m",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = config.radiusMeters,
+                    onValueChange = { onUpdateConfig(target, config.copy(radiusMeters = it)) },
+                    valueRange = 2f..50f
+                )
+                TextButton(
+                    onClick = { onUpdateConfig(target, JitterConfig.DEFAULT) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Reset ke default (3 m / 5 dtk / R4 m)")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Selesai") }
+        }
+    )
+}
+
 // ================== PANEL BISA DIGESER (GENERIC) ==================
-// Semua state panel (lock + posisi drag) di-hoist ke ViewModel dan dipersistenkan
-// ke disk, sehingga bertahan terhadap force stop.
 
 @Composable
 private fun DraggablePanel(
@@ -621,15 +975,19 @@ private fun DraggablePanel(
 
 // ================== KONTEN PANEL ==================
 
-/** Panel 1: A / lock / B (vertikal) */
+/** Panel 1: A / B / lock / Fav / Jitter (vertikal) */
 @Composable
 private fun TrackPanelContent(
     isLocked: Boolean,
     onToggleLock: () -> Unit,
     isActiveA: Boolean,
-    isActiveB: Boolean,
     onToggleA: () -> Unit,
-    onToggleB: () -> Unit
+    isActiveB: Boolean,
+    onToggleB: () -> Unit,
+    isFavoriteActive: Boolean,
+    onFavorite: () -> Unit,
+    isJitterActive: Boolean,
+    onJitter: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -645,9 +1003,13 @@ private fun TrackPanelContent(
         ) {
             TrackButton("A", isActiveA, onToggleA)
             PanelDivider()
+            TrackButton("B", isActiveB, onToggleB)
+            PanelDivider()
             LockButton(isLocked, onToggleLock)
             PanelDivider()
-            TrackButton("B", isActiveB, onToggleB)
+            LabeledIconButton("Fav", Icons.Filled.Star, isFavoriteActive, onFavorite)
+            PanelDivider()
+            LabeledIconButton("Jitter", Icons.Filled.Shuffle, isJitterActive, onJitter)
         }
     }
 }
@@ -719,6 +1081,40 @@ private fun TrackButton(label: String, isActive: Boolean, onClick: () -> Unit) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = if (isActive) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                    contentDescription = "Tombol $label",
+                    tint = if (isActive) MaterialTheme.colorScheme.onErrorContainer
+                    else MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isActive) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** Tombol panel dengan label: dipakai Favorite & Jitter */
+@Composable
+private fun LabeledIconButton(
+    label: String,
+    icon: ImageVector,
+    isActive: Boolean,
+    onClick: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(52.dp)) {
+        Surface(
+            onClick = onClick,
+            shape = CircleShape,
+            color = if (isActive) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.size(44.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
                     contentDescription = "Tombol $label",
                     tint = if (isActive) MaterialTheme.colorScheme.onErrorContainer
                     else MaterialTheme.colorScheme.onPrimaryContainer
