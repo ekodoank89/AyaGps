@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://android.com"
     package="com.hotspot.module">
 
@@ -17,7 +18,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="HOTSPOT: Advanced Location Injection Tool for com.gojek.partner & com.grabtaxi.driver2." />
+            android:value="HOTSPOT: Advanced Location Injection Tool for com.gojek.partner &amp; com.grabtaxi.driver2." />
         <meta-data
             android:name="xposedminversion"
             android:value="102" />
