@@ -1,7 +1,6 @@
 package com.aya.module.presentation.map
-
 import android.Manifest
-import android.content.Context
+import android.content.
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -87,6 +87,8 @@ private val DEFAULT_POSITION = LatLng(-6.2088, 106.8456) // Jakarta
 private val PinRed = Color(0xFFE53935)
 private val TrackAColor = Color(0xFF1E88E5) // biru
 private val TrackBColor = Color(0xFFFB8C00) // oranye
+
+private val PanelBottomPadding = 40.dp
 
 /** Saver agar posisi panel tidak reset saat layar dirotasi */
 private val OffsetSaver = listSaver<Offset, Float>(
@@ -149,7 +151,6 @@ private fun MapContent(
     /** Titik tengah peta = posisi pin */
     val center: LatLng = cameraPositionState.position.target
 
-    // Konversi model domain -> LatLng (di-cache agar hemat)
     val pointsA = remember(trackA) { trackA.map { LatLng(it.latitude, it.longitude) } }
     val pointsB = remember(trackB) { trackB.map { LatLng(it.latitude, it.longitude) } }
 
@@ -219,6 +220,8 @@ private fun MapContent(
 }
 
 // ================== PANEL KONTROL BISA DIGESER ==================
+// Panel SELALU dirender sejak frame pertama (di-anchor bawah-tengah).
+// Tidak ada logika kondisional yang bisa menyembunyikannya.
 
 @Composable
 private fun DraggableControlPanel(
@@ -230,62 +233,71 @@ private fun DraggableControlPanel(
 ) {
     var isLocked by rememberSaveable { mutableStateOf(false) }
     var isDragging by remember { mutableStateOf(false) }
-    var offset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset(0f, 0f)) }
-    var isPlaced by rememberSaveable { mutableStateOf(false) }
+    var dragOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
     var panelSize by remember { mutableStateOf(IntSize.Zero) }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val screenW = constraints.maxWidth.toFloat()
         val screenH = constraints.maxHeight.toFloat()
+        val bottomPadPx = with(density) { PanelBottomPadding.toPx() }
 
-        // Posisi awal: tengah-bawah. Rotasi layar -> posisi di-clamp tetap dalam layar
-        LaunchedEffect(panelSize) {
+        // Nilai terbaru agar akurat di dalam gesture lambda
+        val currentScreenW by rememberUpdatedState(screenW)
+        val currentScreenH by rememberUpdatedState(screenH)
+        val currentPanelSize by rememberUpdatedState(panelSize)
+        val currentBottomPad by rememberUpdatedState(bottomPadPx)
+
+        // Saat ukuran layar/panel berubah (rotasi): cukup clamp posisi.
+        // TIDAK mengatur visibilitas — panel tidak pernah hilang.
+        LaunchedEffect(screenW, screenH, panelSize) {
             if (panelSize == IntSize.Zero) return@LaunchedEffect
+            val baseX = (screenW - panelSize.width) / 2f
+            val baseY = screenH - panelSize.height - bottomPadPx
             val maxX = (screenW - panelSize.width).coerceAtLeast(0f)
             val maxY = (screenH - panelSize.height).coerceAtLeast(0f)
-            if (!isPlaced) {
-                offset = Offset(x = maxX / 2f, y = maxY - with(density) { 48.dp.toPx() })
-                isPlaced = true
-            } else {
-                offset = Offset(offset.x.coerceIn(0f, maxX), offset.y.coerceIn(0f, maxY))
-            }
+            val absX = (baseX + dragOffset.x).coerceIn(0f, maxX)
+            val absY = (baseY + dragOffset.y).coerceIn(0f, maxY)
+            dragOffset = Offset(absX - baseX, absY - baseY)
         }
 
-        if (isPlaced) {
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-                    .shakeIfUnlocked(!isLocked)
-                    .onSizeChanged { panelSize = it }
-                    .then(
-                        if (!isLocked) Modifier.pointerInput(isLocked) {
-                            detectDragGestures(
-                                onDragStart = { isDragging = true },
-                                onDragEnd = { isDragging = false },
-                                onDragCancel = { isDragging = false }
-                            ) { change, dragAmount ->
-                                change.consume()
-                                val maxX = (screenW - panelSize.width).coerceAtLeast(0f)
-                                val maxY = (screenH - panelSize.height).coerceAtLeast(0f)
-                                offset = Offset(
-                                    x = (offset.x + dragAmount.x).coerceIn(0f, maxX),
-                                    y = (offset.y + dragAmount.y).coerceIn(0f, maxY)
-                                )
-                            }
-                        } else Modifier
-                    )
-            ) {
-                PanelContent(
-                    isLocked = isLocked,
-                    isDragging = isDragging,
-                    isTrackingA = isTrackingA,
-                    isTrackingB = isTrackingB,
-                    onToggleLock = { isLocked = !isLocked },
-                    onToggleA = onToggleA,
-                    onToggleB = onToggleB
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)          // <-- dijamin tampil: bawah-tengah
+                .padding(bottom = PanelBottomPadding)
+                .onSizeChanged { panelSize = it }        // ukuran hanya untuk clamp
+                .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
+                .shakeIfUnlocked(!isLocked)
+                .then(
+                    if (!isLocked) Modifier.pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { isDragging = true },
+                            onDragEnd = { isDragging = false },
+                            onDragCancel = { isDragging = false }
+                        ) { change, dragAmount ->
+                            change.consume()
+                            val size = currentPanelSize
+                            if (size == IntSize.Zero || size.width == 0) return@detectDragGestures
+                            val baseX = (currentScreenW - size.width) / 2f
+                            val baseY = currentScreenH - size.height - currentBottomPad
+                            val maxX = (currentScreenW - size.width).coerceAtLeast(0f)
+                            val maxY = (currentScreenH - size.height).coerceAtLeast(0f)
+                            val absX = (baseX + dragOffset.x + dragAmount.x).coerceIn(0f, maxX)
+                            val absY = (baseY + dragOffset.y + dragAmount.y).coerceIn(0f, maxY)
+                            dragOffset = Offset(absX - baseX, absY - baseY)
+                        }
+                    } else Modifier
                 )
-            }
+        ) {
+            PanelContent(
+                isLocked = isLocked,
+                isDragging = isDragging,
+                isTrackingA = isTrackingA,
+                isTrackingB = isTrackingB,
+                onToggleLock = { isLocked = !isLocked },
+                onToggleA = onToggleA,
+                onToggleB = onToggleB
+            )
         }
     }
 }
@@ -381,10 +393,9 @@ private fun LockButton(isLocked: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** Getaran halus saat panel terbuka = sinyal visual bahwa panel bisa digeser */
+/** Getaran halus saat panel tidak terkunci = tanda panel bisa digeser (juga penanda build baru) */
 @Composable
 private fun Modifier.shakeIfUnlocked(unlocked: Boolean): Modifier {
-    if (!unlocked) return this
     val transition = rememberInfiniteTransition(label = "shake")
     val angle by transition.animateFloat(
         initialValue = -1.2f,
@@ -395,7 +406,7 @@ private fun Modifier.shakeIfUnlocked(unlocked: Boolean): Modifier {
         ),
         label = "shakeAngle"
     )
-    return graphicsLayer { rotationZ = angle }
+    return if (unlocked) graphicsLayer { rotationZ = angle } else this
 }
 
 private fun hasLocationPermission(context: Context): Boolean =
