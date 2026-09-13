@@ -14,13 +14,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -338,18 +338,14 @@ private fun MapContent(
                 .offset(y = (-24).dp)
         )
 
-        // ---- KOLOM CHIP (TENGAH ATAS): chip pin + chip A + chip B ----
-        Column(
+        // ---- CHIP KOORDINAT PIN (ATAS TENGAH) — TAP untuk hide/unhide ----
+        Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(16.dp)
         ) {
-
             if (isPinChipVisible) {
-                // Chip koordinat pin — TAP untuk sembunyikan
                 Surface(
                     onClick = { isPinChipVisible = false },
                     shape = RoundedCornerShape(20.dp),
@@ -368,14 +364,7 @@ private fun MapContent(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = String.format(
-                                Locale.US, "%.6f, %.6f", center.latitude, center.longitude
-                            ),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        CoordTwoLines(latitude = center.latitude, longitude = center.longitude)
                     }
                 }
             } else {
@@ -397,33 +386,58 @@ private fun MapContent(
                     )
                 }
             }
+        }
 
-            // Chip titik A — tampil saat A aktif, TAP untuk terbang ke marker A
-            if (isActiveA) {
-                PointChip(
-                    label = "A",
-                    accent = TrackAColor,
-                    location = pointA,
-                    onClick = onFocusA
-                )
+        // ---- CHIP TITIK A (ATAS KIRI) — tampil saat A aktif, TAP = terbang ke marker A ----
+        if (isActiveA) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(16.dp)
+            ) {
+                PointChip(label = "A", accent = TrackAColor, location = pointA, onClick = onFocusA)
             }
+        }
 
-            // Chip titik B — tampil saat B aktif, TAP untuk terbang ke marker B
-            if (isActiveB) {
-                PointChip(
-                    label = "B",
-                    accent = TrackBColor,
-                    location = pointB,
-                    onClick = onFocusB
-                )
+        // ---- CHIP TITIK B (ATAS KANAN) — tampil saat B aktif, TAP = terbang ke marker B ----
+        if (isActiveB) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(16.dp)
+            ) {
+                PointChip(label = "B", accent = TrackBColor, location = pointB, onClick = onFocusB)
             }
         }
     }
 }
 
+/** Dua baris koordinat: baris 1 latitude, baris 2 longitude (monospace) */
+@Composable
+private fun CoordTwoLines(latitude: Double, longitude: Double) {
+    Column {
+        Text(
+            text = String.format(Locale.US, "%.6f", latitude),
+            style = MaterialTheme.typography.labelMedium,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(1.dp))
+        Text(
+            text = String.format(Locale.US, "%.6f", longitude),
+            style = MaterialTheme.typography.labelMedium,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
 /**
- * Chip titik: indikator berkedip + badge huruf + koordinat titik yang ditandai pin.
- * Bisa di-tap untuk menerbangkan kamera ke marker terkait.
+ * Chip titik A/B: badge huruf + indikator berkedip + koordinat 2 baris
+ * (baris 1 latitude, baris 2 longitude). Bisa di-tap untuk menerbangkan
+ * kamera ke marker terkait.
  */
 @Composable
 private fun PointChip(
@@ -454,35 +468,40 @@ private fun PointChip(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Filled.FiberManualRecord,
-                contentDescription = "Titik aktif",
-                tint = accent.copy(alpha = blinkAlpha),
-                modifier = Modifier.size(10.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-            Box(
-                modifier = Modifier
-                    .size(18.dp)
-                    .background(accent, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = label,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
+            // Kolom indikator: titik berkedip di atas badge huruf
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = Icons.Filled.FiberManualRecord,
+                    contentDescription = "Titik aktif",
+                    tint = accent.copy(alpha = blinkAlpha),
+                    modifier = Modifier.size(10.dp)
                 )
+                Spacer(Modifier.height(2.dp))
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .background(accent, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
             Spacer(Modifier.width(8.dp))
-            Text(
-                text = location?.let {
-                    String.format(Locale.US, "%.6f, %.6f", it.latitude, it.longitude)
-                } ?: "-",
-                style = MaterialTheme.typography.labelMedium,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold
-            )
+            if (location != null) {
+                CoordTwoLines(latitude = location.latitude, longitude = location.longitude)
+            } else {
+                Text(
+                    text = "-",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }
