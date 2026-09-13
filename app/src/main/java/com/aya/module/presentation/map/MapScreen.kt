@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,11 +33,11 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -220,9 +219,7 @@ private fun MapContent(
     }
 }
 
-// ================== PANEL KONTROL BISA DIGESER ==================
-// Panel SELALU dirender sejak frame pertama (di-anchor bawah-tengah).
-// Tidak ada logika kondisional yang bisa menyembunyikannya.
+// ================== PANEL KONTROL VERTIKAL BISA DIGESER ==================
 
 @Composable
 private fun DraggableControlPanel(
@@ -250,7 +247,6 @@ private fun DraggableControlPanel(
         val currentBottomPad by rememberUpdatedState(bottomPadPx)
 
         // Saat ukuran layar/panel berubah (rotasi): cukup clamp posisi.
-        // TIDAK mengatur visibilitas — panel tidak pernah hilang.
         LaunchedEffect(screenW, screenH, panelSize) {
             if (panelSize == IntSize.Zero) return@LaunchedEffect
             val baseX = (screenW - panelSize.width) / 2f
@@ -264,7 +260,7 @@ private fun DraggableControlPanel(
 
         Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)          // <-- dijamin tampil: bawah-tengah
+                .align(Alignment.BottomCenter)          // posisi awal: bawah-tengah
                 .padding(bottom = PanelBottomPadding)
                 .onSizeChanged { panelSize = it }        // ukuran hanya untuk clamp
                 .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
@@ -322,22 +318,23 @@ private fun PanelContent(
             BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         } else null
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // ===== SUSUNAN VERTIKAL: A di atas, gembok tengah, B di bawah =====
+        Column(
+            modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             TrackButton("A", isTrackingA, onToggleA)
-            VerticalDivider(
+            HorizontalDivider(
                 modifier = Modifier
-                    .height(36.dp)
-                    .padding(horizontal = 6.dp),
+                    .width(36.dp)
+                    .padding(vertical = 6.dp),
                 color = MaterialTheme.colorScheme.outlineVariant
             )
             LockButton(isLocked, onToggleLock)
-            VerticalDivider(
+            HorizontalDivider(
                 modifier = Modifier
-                    .height(36.dp)
-                    .padding(horizontal = 6.dp),
+                    .width(36.dp)
+                    .padding(vertical = 6.dp),
                 color = MaterialTheme.colorScheme.outlineVariant
             )
             TrackButton("B", isTrackingB, onToggleB)
@@ -394,7 +391,7 @@ private fun LockButton(isLocked: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** Getaran halus saat panel tidak terkunci = tanda panel bisa digeser (juga penanda build baru) */
+/** Getaran halus saat panel tidak terkunci = tanda panel bisa digeser */
 @Composable
 private fun Modifier.shakeIfUnlocked(unlocked: Boolean): Modifier {
     val transition = rememberInfiniteTransition(label = "shake")
