@@ -9,8 +9,8 @@ import com.aya.module.domain.model.SavedCameraState
 /** Zoom saat auto-focus ke posisi GPS user */
 const val FOCUS_ZOOM = 17f
 
-/** Target jitter */
-enum class JitterTarget { A, B }
+/** Kategori titik (dipakai jitter & favorite) */
+enum class PointCategory { A, B }
 
 /** Perintah kamera satu-shot dari ViewModel ke UI */
 sealed interface MapCameraEvent {
@@ -28,7 +28,8 @@ data class MapUiState(
     val pointA: LocationData? = null,
     val isActiveB: Boolean = false,
     val pointB: LocationData? = null,
-    val favorite: FavoritePoint? = null,
+    val favoritesA: List<FavoritePoint> = emptyList(),
+    val favoritesB: List<FavoritePoint> = emptyList(),
     val isJitterActiveA: Boolean = false,
     val jitterBaseA: LocationData? = null,
     val isJitterActiveB: Boolean = false,
@@ -48,14 +49,19 @@ sealed interface MapIntent {
     data object PermissionDenied : MapIntent
     data class ToggleA(val pinLocation: LocationData) : MapIntent
     data class ToggleB(val pinLocation: LocationData) : MapIntent
-    data class SaveFavorite(val name: String, val location: LocationData) : MapIntent
-    data object DeleteFavorite : MapIntent
-    data class ToggleJitter(val target: JitterTarget) : MapIntent
-    data class UpdateJitterConfig(val target: JitterTarget, val config: JitterConfig) : MapIntent
+    data class SaveFavorite(
+        val category: PointCategory,
+        val index: Int?, // null = tambah baru, selain itu = edit pada indeks tsb
+        val name: String,
+        val location: LocationData
+    ) : MapIntent
+    data class DeleteFavorite(val category: PointCategory, val index: Int) : MapIntent
+    data class PlayFavorite(val category: PointCategory, val index: Int) : MapIntent
+    data class ToggleJitter(val target: PointCategory) : MapIntent
+    data class UpdateJitterConfig(val target: PointCategory, val config: JitterConfig) : MapIntent
     data object FocusCurrentLocation : MapIntent
     data object FocusPointA : MapIntent
     data object FocusPointB : MapIntent
-    data object FocusFavorite : MapIntent
     data object ToggleTrackPanelLock : MapIntent
     data object ToggleZoomPanelLock : MapIntent
     data class TrackPanelOffsetChanged(val offset: PanelOffset) : MapIntent
