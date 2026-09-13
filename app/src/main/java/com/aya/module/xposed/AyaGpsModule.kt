@@ -12,7 +12,7 @@ import io.github.libxposed.api.XposedModuleInterface
  */
 class AyaGpsModule(
     base: XposedInterface,
-    param: XposedModule.ModuleLoadedParam
+    param: XposedModuleInterface.ModuleLoadedParam
 ) : XposedModule(base, param) {
 
     init {
