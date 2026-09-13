@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aya.module.domain.model.LocationData
 import com.aya.module.domain.model.SavedPanelLocks
+import com.aya.module.domain.model.SavedPanelOffsets
 import com.aya.module.domain.model.SavedPointsState
 import com.aya.module.domain.repository.MapStateRepository
 import com.aya.module.domain.usecase.GetCurrentLocationUseCase
@@ -29,19 +30,24 @@ class MapViewModel(
     val events: Flow<LocationData> = _events.receiveAsFlow()
 
     init {
-        // Pulihkan kondisi terakhir (titik A/B + lock panel) saat aplikasi dibuka ulang,
-        // termasuk setelah force stop
+        // Pulihkan semua kondisi terakhir saat aplikasi dibuka ulang,
+        // termasuk setelah force stop: titik A/B, lock panel, posisi drag, posisi kamera
         viewModelScope.launch {
-            val saved = mapStateRepository.load()
+            val points = mapStateRepository.load()
             val locks = mapStateRepository.loadPanelLocks()
+            val offsets = mapStateRepository.loadPanelOffsets()
+            val camera = mapStateRepository.loadCameraState()
             _state.update {
                 it.copy(
-                    isActiveA = saved.isActiveA,
-                    pointA = saved.pointA,
-                    isActiveB = saved.isActiveB,
-                    pointB = saved.pointB,
+                    isActiveA = points.isActiveA,
+                    pointA = points.pointA,
+                    isActiveB = points.isActiveB,
+                    pointB = points.pointB,
                     isTrackPanelLocked = locks.trackLocked,
-                    isZoomPanelLocked = locks.zoomLocked
+                    isZoomPanelLocked = locks.zoomLocked,
+                    trackPanelOffset = offsets.track,
+                    zoomPanelOffset = offsets.zoom,
+                    cameraState = camera
                 )
             }
         }
@@ -78,6 +84,21 @@ class MapViewModel(
                 persistLocks()
             }
 
+            // Posisi drag panel (dikirim saat gesture selesai) + persistenkan
+            is MapIntent.TrackPanelOffsetChanged -> {
+                _state.update { it.copy(trackPanelOffset = intent.offset) }
+                persistPanelOffsets()
+            }
+            is MapIntent.ZoomPanelOffsetChanged -> {
+                _state.update { it.copy(zoomPanelOffset = intent.offset) }
+                persistPanelOffsets()
+            }
+
+            // Simpan posisi kamera/pin terakhir (dipanggil saat aplikasi ditinggalkan)
+            is MapIntent.SaveCameraState -> viewModelScope.launch {
+                mapStateRepository.saveCameraState(intent.camera)
+            }
+
             // Auto-focus: ambil posisi GPS terkini, kirim sebagai event kamera
             MapIntent.FocusCurrentLocation -> viewModelScope.launch {
                 try {
@@ -112,6 +133,19 @@ class MapViewModel(
                 SavedPanelLocks(
                     trackLocked = s.isTrackPanelLocked,
                     zoomLocked = s.isZoomPanelLocked
+                )
+            )
+        }
+    }
+
+    /** Simpan posisi drag kedua panel ke disk setiap kali berubah */
+    private fun persistPanelOffsets() {
+        val s = _state.value
+        viewModelScope.launch {
+            mapStateRepository.savePanelOffsets(
+                SavedPanelOffsets(
+                    track = s.trackPanelOffset,
+                    zoom = s.zoomPanelOffset
                 )
             )
         }
