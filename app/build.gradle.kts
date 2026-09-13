@@ -52,8 +52,7 @@ android {
 }
 
 dependencies {
-    // Xposed Modern API — stub kompilasi LOKAL. Jar dari :xposed-api-stub hanya
-    // dipakai saat kompilasi (compileOnly), tidak ikut ter-bundle ke APK.
+        // Xposed Modern API — stub kompilasi LOKAL (tidak ikut ter-bundle ke APK).
     // Kelas asli disediakan framework LSPosed saat modul di-load.
     compileOnly(project(":xposed-api-stub"))
 
