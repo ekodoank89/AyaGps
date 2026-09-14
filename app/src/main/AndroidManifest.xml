@@ -32,6 +32,11 @@
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />
 
+        <provider
+            android:name="com.aya.module.core.AyaConfigProvider"
+            android:authorities="com.aya.module.config"
+            android:exported="true" />
+        
         <activity
             android:name=".MainActivity"
             android:exported="true">
