@@ -1,8 +1,14 @@
 package com.aya.module.presentation.map
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
@@ -37,6 +43,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -45,6 +52,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Stop
@@ -52,6 +60,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -88,6 +97,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -120,11 +130,6 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val PERMISSIONS = arrayOf(
-    Manifest.permission.ACCESS_FINE_LOCATION,
-    Manifest.permission.ACCESS_COARSE_LOCATION
-)
-
 private val DEFAULT_POSITION = LatLng(-6.2088, 106.8456) // Jakarta
 private val STANDARD_ZOOM = 16f
 private val MAX_ZOOM = 20f
@@ -138,11 +143,209 @@ private enum class PanelAnchor { BottomCenter, CenterEnd }
 
 /** State form tambah/edit favorit */
 private data class FavoriteFormState(
-    val editIndex: Int?, // null = tambah baru
+    val editIndex: Int?,
     val initialName: String,
     val initialLat: Double?,
     val initialLng: Double?
 )
+
+// ================== GERBANG IZIN BERURUTAN (DOUBLE-CHECK) ==================
+
+private enum class PermStep { FINE, BACKGROUND, NOTIFICATION, BATTERY, DONE }
+
+private fun hasFine(c: Context) = ContextCompat.checkSelfPermission(
+    c, Manifest.permission.ACCESS_FINE_LOCATION
+) == PackageManager.PERMISSION_GRANTED
+
+private fun hasBackground(c: Context) = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+    ContextCompat.checkSelfPermission(
+        c, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+
+private fun needsNotif(c: Context) = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+
+private fun hasNotif(c: Context) = !needsNotif(c) || ContextCompat.checkSelfPermission(
+    c, Manifest.permission.POST_NOTIFICATIONS
+) == PackageManager.PERMISSION_GRANTED
+
+private fun batteryExempt(c: Context): Boolean {
+    val pm = c.getSystemService(Context.POWER_SERVICE) as PowerManager
+    return pm.isIgnoringBatteryOptimizations(c.packageName)
+}
+
+private fun currentPermStep(c: Context): PermStep = when {
+    !hasFine(c) -> PermStep.FINE
+    !hasBackground(c) -> PermStep.BACKGROUND
+    !hasNotif(c) -> PermStep.NOTIFICATION
+    !batteryExempt(c) -> PermStep.BATTERY
+    else -> PermStep.DONE
+}
+
+private data class PermItem(val label: String, val done: Boolean, val required: Boolean)
+
+private fun permItems(c: Context): List<PermItem> = listOf(
+    PermItem("Lokasi (saat dipakai)", hasFine(c), true),
+    PermItem("Lokasi (sepanjang waktu)", hasBackground(c), true),
+    PermItem("Notifikasi", hasNotif(c), needsNotif(c)),
+    PermItem("Baterai tidak dibatasi", batteryExempt(c), true)
+)
+
+/**
+ * Gerbang izin: diminta BERURUTAN (lokasi → lokasi background → notifikasi → baterai)
+ * dan tiap langkah di-CHECK ULANG; alur tidak lanjut sebelum status sesuai.
+ */
+@Composable
+private fun PermissionsGate(onAllGranted: () -> Unit) {
+    val context = LocalContext.current
+    var step by remember { mutableStateOf(currentPermStep(context)) }
+    var attempted by remember(step) { mutableStateOf(false) }
+
+    LaunchedEffect(step) {
+        if (step == PermStep.DONE) onAllGranted()
+    }
+
+    val fineLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ -> step = currentPermStep(context) }
+    val bgLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> step = currentPermStep(context) }
+    val notifLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> step = currentPermStep(context) }
+    val batteryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ -> step = currentPermStep(context) }
+
+    fun requestCurrent() {
+        attempted = true
+        when (step) {
+            PermStep.FINE -> fineLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+            PermStep.BACKGROUND -> bgLauncher.launch(
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            )
+            PermStep.NOTIFICATION -> notifLauncher.launch(
+                Manifest.permission.POST_NOTIFICATIONS
+            )
+            PermStep.BATTERY -> {
+                val intent = Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${context.packageName}")
+                )
+                try {
+                    batteryLauncher.launch(intent)
+                } catch (_: Exception) {
+                    context.startActivity(
+                        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    )
+                }
+            }
+            PermStep.DONE -> {}
+        }
+    }
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Filled.LocationOn,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(56.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+            Text("Izin yang Diperlukan", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "AYA GPS membutuhkan izin berikut, diminta berurutan " +
+                        "dan diperiksa ulang sampai sesuai.",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(24.dp))
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    permItems(context).forEachIndexed { index, item ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (item.done) Icons.Filled.CheckCircle
+                                else Icons.Filled.Radio,
+                                contentDescription = null,
+                                tint = if (item.done) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = item.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (!item.required) {
+                                Text(
+                                    text = "tidak diperlukan",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+                        if (index < 3) HorizontalDivider()
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            if (step != PermStep.DONE) {
+                Button(onClick = { requestCurrent() }) {
+                    Text(
+                        when (step) {
+                            PermStep.FINE -> "Izinkan Lokasi"
+                            PermStep.BACKGROUND -> "Izinkan Sepanjang Waktu"
+                            PermStep.NOTIFICATION -> "Izinkan Notifikasi"
+                            PermStep.BATTERY -> "Buka Setelan Baterai"
+                            PermStep.DONE -> ""
+                        }
+                    )
+                }
+                if (attempted) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Belum sesuai? Tekan tombol lagi atau \"Periksa Ulang\" " +
+                                "setelah mengubah setelan.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { step = currentPermStep(context) }) {
+                        Text("Periksa Ulang")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ================== LAYAR UTAMA ==================
 
 @Composable
 fun MapScreen() {
@@ -157,192 +360,193 @@ fun MapScreen() {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
-    // Kamera di-hoist: dibaca tombol A/B, dan dikendalikan autofocus/zoom
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(DEFAULT_POSITION, STANDARD_ZOOM)
     }
 
-    // Pulihkan posisi kamera/pin terakhir dari disk (sekali, setelah data dimuat)
-    var cameraRestored by remember { mutableStateOf(false) }
-    LaunchedEffect(state.cameraState) {
-        val saved = state.cameraState ?: return@LaunchedEffect
-        if (!cameraRestored) {
-            cameraPositionState.position = CameraPosition.fromLatLngZoom(
-                LatLng(saved.latitude, saved.longitude), saved.zoom
-            )
-            cameraRestored = true
+    PermissionsGate(
+        onAllGranted = { viewModel.onIntent(MapIntent.PermissionGranted) }
+    ) {
+        // Pulihkan posisi kamera/pin terakhir dari disk (sekali, setelah data dimuat)
+        var cameraRestored by remember { mutableStateOf(false) }
+        LaunchedEffect(state.cameraState) {
+            val saved = state.cameraState ?: return@LaunchedEffect
+            if (!cameraRestored) {
+                cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                    LatLng(saved.latitude, saved.longitude), saved.zoom
+                )
+                cameraRestored = true
+            }
         }
-    }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        viewModel.onIntent(
-            if (result.values.all { it }) MapIntent.PermissionGranted
-            else MapIntent.PermissionDenied
-        )
-    }
-
-    LaunchedEffect(Unit) {
-        if (hasLocationPermission(context)) viewModel.onIntent(MapIntent.PermissionGranted)
-        else permissionLauncher.launch(PERMISSIONS)
-    }
-
-    // Perintah kamera satu-shot: auto-focus GPS (zoom FOCUS_ZOOM)
-    // dan lompat ke titik/marker (zoom saat ini dipertahankan)
-    LaunchedEffect(Unit) {
-        viewModel.events.collect { event ->
-            when (event) {
-                is MapCameraEvent.FlyTo -> {
-                    val target = LatLng(
-                        event.location.latitude, event.location.longitude
-                    )
-                    val zoom = event.zoom ?: cameraPositionState.position.zoom
-                    cameraPositionState.animate(
-                        CameraUpdateFactory.newLatLngZoom(target, zoom)
-                    )
+        // Perintah kamera satu-shot
+        LaunchedEffect(Unit) {
+            viewModel.events.collect { event ->
+                when (event) {
+                    is MapCameraEvent.FlyTo -> {
+                        val target = LatLng(
+                            event.location.latitude, event.location.longitude
+                        )
+                        val zoom = event.zoom ?: cameraPositionState.position.zoom
+                        cameraPositionState.animate(
+                            CameraUpdateFactory.newLatLngZoom(target, zoom)
+                        )
+                    }
                 }
             }
         }
-    }
 
-    // Simpan posisi kamera/pin terakhir saat aplikasi ditinggalkan (ON_PAUSE)
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
-                val pos = cameraPositionState.position
-                viewModel.onIntent(
-                    MapIntent.SaveCameraState(
-                        SavedCameraState(
-                            latitude = pos.target.latitude,
-                            longitude = pos.target.longitude,
-                            zoom = pos.zoom
+        // Simpan posisi kamera/pin terakhir saat aplikasi ditinggalkan (ON_PAUSE)
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_PAUSE) {
+                    val pos = cameraPositionState.position
+                    viewModel.onIntent(
+                        MapIntent.SaveCameraState(
+                            SavedCameraState(
+                                latitude = pos.target.latitude,
+                                longitude = pos.target.longitude,
+                                zoom = pos.zoom
+                            )
                         )
                     )
-                )
+                }
             }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
 
-    /** Ambil koordinat pin tengah SAAT tombol ditekan (snapshot) */
-    val currentPin: () -> LocationData = {
-        val target = cameraPositionState.position.target
-        LocationData(latitude = target.latitude, longitude = target.longitude)
-    }
+        val currentPin: () -> LocationData = {
+            val target = cameraPositionState.position.target
+            LocationData(latitude = target.latitude, longitude = target.longitude)
+        }
 
-    // State dialog (transien — tidak perlu persisten)
-    var showFavoriteDialog by remember { mutableStateOf(false) }
-    var favoriteDialogPin by remember { mutableStateOf<LocationData?>(null) }
-    var showJitterDialog by remember { mutableStateOf(false) }
+        var showFavoriteDialog by remember { mutableStateOf(false) }
+        var favoriteDialogPin by remember { mutableStateOf<LocationData?>(null) }
+        var showJitterDialog by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        MapContent(
-            hasPermission = state.hasPermission,
-            cameraPositionState = cameraPositionState,
-            pointA = state.pointA,
-            pointB = state.pointB,
-            isActiveA = state.isActiveA,
-            isActiveB = state.isActiveB,
-            isJitterActiveA = state.isJitterActiveA,
-            isJitterActiveB = state.isJitterActiveB,
-            onFocusA = { viewModel.onIntent(MapIntent.FocusPointA) },
-            onFocusB = { viewModel.onIntent(MapIntent.FocusPointB) }
-        )
-
-        // ===== PANEL 1: A / B / lock / Fav / Jitter (default bawah-tengah) =====
-        DraggablePanel(
-            anchor = PanelAnchor.BottomCenter,
-            anchorPadding = 40.dp,
-            isLocked = state.isTrackPanelLocked,
-            onToggleLock = { viewModel.onIntent(MapIntent.ToggleTrackPanelLock) },
-            savedOffset = state.trackPanelOffset,
-            onOffsetChanged = { off ->
-                viewModel.onIntent(MapIntent.TrackPanelOffsetChanged(PanelOffset(off.x, off.y)))
-            },
-            modifier = Modifier.zIndex(2f)
-        ) {
-            TrackPanelContent(
-                isLocked = state.isTrackPanelLocked,
-                onToggleLock = { viewModel.onIntent(MapIntent.ToggleTrackPanelLock) },
+        Box(modifier = Modifier.fillMaxSize()) {
+            MapContent(
+                hasPermission = state.hasPermission,
+                cameraPositionState = cameraPositionState,
+                pointA = state.pointA,
+                pointB = state.pointB,
                 isActiveA = state.isActiveA,
-                onToggleA = { viewModel.onIntent(MapIntent.ToggleA(currentPin())) },
                 isActiveB = state.isActiveB,
-                onToggleB = { viewModel.onIntent(MapIntent.ToggleB(currentPin())) },
-                isFavoriteActive = state.favoritesA.isNotEmpty() || state.favoritesB.isNotEmpty(),
-                onFavorite = {
-                    favoriteDialogPin = currentPin()
-                    showFavoriteDialog = true
-                },
-                isJitterActive = state.isJitterActiveA || state.isJitterActiveB,
-                onJitter = { showJitterDialog = true }
-            )
-        }
-
-        // ===== PANEL 2: AutoFocus / lock / ZoomIn / ZoomOut (default kanan-tengah) =====
-        DraggablePanel(
-            anchor = PanelAnchor.CenterEnd,
-            anchorPadding = 16.dp,
-            isLocked = state.isZoomPanelLocked,
-            onToggleLock = { viewModel.onIntent(MapIntent.ToggleZoomPanelLock) },
-            savedOffset = state.zoomPanelOffset,
-            onOffsetChanged = { off ->
-                viewModel.onIntent(MapIntent.ZoomPanelOffsetChanged(PanelOffset(off.x, off.y)))
-            },
-            modifier = Modifier.zIndex(2f)
-        ) {
-            ZoomPanelContent(
-                isLocked = state.isZoomPanelLocked,
-                onToggleLock = { viewModel.onIntent(MapIntent.ToggleZoomPanelLock) },
-                onFocus = { viewModel.onIntent(MapIntent.FocusCurrentLocation) },
-                onZoomIn = {
-                    scope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomTo(MAX_ZOOM)) }
-                },
-                onZoomOut = {
-                    scope.launch { cameraPositionState.animate(CameraUpdateFactory.zoomTo(STANDARD_ZOOM)) }
-                }
-            )
-        }
-
-        // ===== DIALOG FAVORIT =====
-        if (showFavoriteDialog) {
-            FavoriteDialog(
-                pin = favoriteDialogPin ?: currentPin(),
-                favoritesA = state.favoritesA,
-                favoritesB = state.favoritesB,
-                onDismiss = { showFavoriteDialog = false },
-                onPlay = { category, index ->
-                    showFavoriteDialog = false
-                    viewModel.onIntent(MapIntent.PlayFavorite(category, index))
-                },
-                onSave = { category, index, name, location ->
-                    viewModel.onIntent(MapIntent.SaveFavorite(category, index, name, location))
-                },
-                onDelete = { category, index ->
-                    viewModel.onIntent(MapIntent.DeleteFavorite(category, index))
-                }
-            )
-        }
-
-        // ===== DIALOG JITTER =====
-        if (showJitterDialog) {
-            JitterDialog(
-                configA = state.jitterConfigA,
-                configB = state.jitterConfigB,
-                isPointActiveA = state.isActiveA,
-                isPointActiveB = state.isActiveB,
                 isJitterActiveA = state.isJitterActiveA,
                 isJitterActiveB = state.isJitterActiveB,
-                onUpdateConfig = { target, config ->
-                    viewModel.onIntent(MapIntent.UpdateJitterConfig(target, config))
+                isPinChipVisible = state.isPinChipVisible,
+                onPinChipToggle = { visible ->
+                    viewModel.onIntent(MapIntent.PinChipVisibilityChanged(visible))
                 },
-                onToggleJitter = { target ->
-                    viewModel.onIntent(MapIntent.ToggleJitter(target))
-                },
-                onDismiss = { showJitterDialog = false }
+                onFocusA = { viewModel.onIntent(MapIntent.FocusPointA) },
+                onFocusB = { viewModel.onIntent(MapIntent.FocusPointB) }
             )
+
+            // ===== PANEL 1: A / B / lock / Fav / Jitter =====
+            DraggablePanel(
+                anchor = PanelAnchor.BottomCenter,
+                anchorPadding = 40.dp,
+                isLocked = state.isTrackPanelLocked,
+                onToggleLock = { viewModel.onIntent(MapIntent.ToggleTrackPanelLock) },
+                savedOffset = state.trackPanelOffset,
+                onOffsetChanged = { off ->
+                    viewModel.onIntent(
+                        MapIntent.TrackPanelOffsetChanged(PanelOffset(off.x, off.y))
+                    )
+                },
+                modifier = Modifier.zIndex(2f)
+            ) {
+                TrackPanelContent(
+                    isLocked = state.isTrackPanelLocked,
+                    onToggleLock = { viewModel.onIntent(MapIntent.ToggleTrackPanelLock) },
+                    isActiveA = state.isActiveA,
+                    onToggleA = { viewModel.onIntent(MapIntent.ToggleA(currentPin())) },
+                    isActiveB = state.isActiveB,
+                    onToggleB = { viewModel.onIntent(MapIntent.ToggleB(currentPin())) },
+                    isFavoriteActive = state.favoritesA.isNotEmpty() ||
+                            state.favoritesB.isNotEmpty(),
+                    onFavorite = {
+                        favoriteDialogPin = currentPin()
+                        showFavoriteDialog = true
+                    },
+                    isJitterActive = state.isJitterActiveA || state.isJitterActiveB,
+                    onJitter = { showJitterDialog = true }
+                )
+            }
+
+            // ===== PANEL 2: AutoFocus / lock / ZoomIn / ZoomOut =====
+            DraggablePanel(
+                anchor = PanelAnchor.CenterEnd,
+                anchorPadding = 16.dp,
+                isLocked = state.isZoomPanelLocked,
+                onToggleLock = { viewModel.onIntent(MapIntent.ToggleZoomPanelLock) },
+                savedOffset = state.zoomPanelOffset,
+                onOffsetChanged = { off ->
+                    viewModel.onIntent(
+                        MapIntent.ZoomPanelOffsetChanged(PanelOffset(off.x, off.y))
+                    )
+                },
+                modifier = Modifier.zIndex(2f)
+            ) {
+                ZoomPanelContent(
+                    isLocked = state.isZoomPanelLocked,
+                    onToggleLock = { viewModel.onIntent(MapIntent.ToggleZoomPanelLock) },
+                    onFocus = { viewModel.onIntent(MapIntent.FocusCurrentLocation) },
+                    onZoomIn = {
+                        scope.launch {
+                            cameraPositionState.animate(CameraUpdateFactory.zoomTo(MAX_ZOOM))
+                        }
+                    },
+                    onZoomOut = {
+                        scope.launch {
+                            cameraPositionState.animate(CameraUpdateFactory.zoomTo(STANDARD_ZOOM))
+                        }
+                    }
+                )
+            }
+
+            // ===== DIALOG FAVORIT =====
+            if (showFavoriteDialog) {
+                FavoriteDialog(
+                    pin = favoriteDialogPin ?: currentPin(),
+                    favoritesA = state.favoritesA,
+                    favoritesB = state.favoritesB,
+                    onDismiss = { showFavoriteDialog = false },
+                    onPlay = { category, index ->
+                        showFavoriteDialog = false
+                        viewModel.onIntent(MapIntent.PlayFavorite(category, index))
+                    },
+                    onSave = { category, index, name, location ->
+                        viewModel.onIntent(
+                            MapIntent.SaveFavorite(category, index, name, location)
+                        )
+                    },
+                    onDelete = { category, index ->
+                        viewModel.onIntent(MapIntent.DeleteFavorite(category, index))
+                    }
+                )
+            }
+
+            // ===== DIALOG JITTER =====
+            if (showJitterDialog) {
+                JitterDialog(
+                    configA = state.jitterConfigA,
+                    configB = state.jitterConfigB,
+                    isPointActiveA = state.isActiveA,
+                    isPointActiveB = state.isActiveB,
+                    isJitterActiveA = state.isJitterActiveA,
+                    isJitterActiveB = state.isJitterActiveB,
+                    onUpdateConfig = { target, config ->
+                        viewModel.onIntent(MapIntent.UpdateJitterConfig(target, config))
+                    },
+                    onToggleJitter = { target ->
+                        viewModel.onIntent(MapIntent.ToggleJitter(target))
+                    },
+                    onDismiss = { showJitterDialog = false }
+                )
+            }
         }
     }
 }
@@ -359,14 +563,12 @@ private fun MapContent(
     isActiveB: Boolean,
     isJitterActiveA: Boolean,
     isJitterActiveB: Boolean,
+    isPinChipVisible: Boolean,
+    onPinChipToggle: (Boolean) -> Unit,
     onFocusA: () -> Unit,
     onFocusB: () -> Unit
 ) {
-    /** Titik tengah peta = posisi pin */
     val center: LatLng = cameraPositionState.position.target
-
-    /** Status tampil/sembunyi chip koordinat pin (tersimpan saat rotasi) */
-    var isPinChipVisible by rememberSaveable { mutableStateOf(true) }
 
     Box(modifier = Modifier.fillMaxSize()) {
 
@@ -383,7 +585,6 @@ private fun MapContent(
                 mapToolbarEnabled = false
             )
         ) {
-            // Marker A — ikut bergerak saat jitter aktif
             pointA?.let { p ->
                 MarkerComposable(
                     state = MarkerState(position = LatLng(p.latitude, p.longitude)),
@@ -398,7 +599,6 @@ private fun MapContent(
                 }
             }
 
-            // Marker B — ikut bergerak saat jitter aktif
             pointB?.let { p ->
                 MarkerComposable(
                     state = MarkerState(position = LatLng(p.latitude, p.longitude)),
@@ -425,7 +625,7 @@ private fun MapContent(
                 .offset(y = (-24).dp)
         )
 
-        // ---- CHIP KOORDINAT PIN (ATAS TENGAH) — TAP untuk hide/unhide ----
+        // ---- CHIP KOORDINAT PIN (ATAS TENGAH) — TAP hide/unhide, tersimpan di disk ----
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -434,7 +634,7 @@ private fun MapContent(
         ) {
             if (isPinChipVisible) {
                 Surface(
-                    onClick = { isPinChipVisible = false },
+                    onClick = { onPinChipToggle(false) },
                     shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 3.dp,
@@ -456,7 +656,7 @@ private fun MapContent(
                 }
             } else {
                 Surface(
-                    onClick = { isPinChipVisible = true },
+                    onClick = { onPinChipToggle(true) },
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 3.dp,
@@ -532,7 +732,7 @@ private fun CoordTwoLines(latitude: Double, longitude: Double) {
     }
 }
 
-/** Chip titik A/B: badge + titik berkedip (+ label JITTER saat aktif) + koordinat 2 baris */
+/** Chip titik A/B: badge + titik berkedip (+ label JITTER) + koordinat 2 baris */
 @Composable
 private fun PointChip(
     label: String,
@@ -612,11 +812,6 @@ private fun PointChip(
 
 // ================== DIALOG FAVORIT ==================
 
-/**
- * Dialog favorit: 2 tab (Favorite A / Favorite B), daftar favorit per kategori
- * dengan aksi play (tap nama), edit, dan hapus (konfirmasi). Tombol + Tambah
- * membuka form input (Dari Pin / Manual).
- */
 @Composable
 private fun FavoriteDialog(
     pin: LocationData,
@@ -627,14 +822,13 @@ private fun FavoriteDialog(
     onSave: (PointCategory, Int?, String, LocationData) -> Unit,
     onDelete: (PointCategory, Int) -> Unit
 ) {
-    var tab by remember { mutableStateOf(0) } // 0 = A, 1 = B
+    var tab by remember { mutableStateOf(0) }
     val category = if (tab == 0) PointCategory.A else PointCategory.B
     val favorites = if (tab == 0) favoritesA else favoritesB
 
     var formState by remember { mutableStateOf<FavoriteFormState?>(null) }
     var deleteIndex by remember { mutableStateOf<Int?>(null) }
 
-    // Dialog konfirmasi hapus
     if (deleteIndex != null) {
         val idx = deleteIndex!!
         val target = favorites.getOrNull(idx)
@@ -661,11 +855,12 @@ private fun FavoriteDialog(
         title = { Text("Favorite") },
         text = {
             if (formState == null) {
-                // ===== MODE DAFTAR =====
                 Column {
                     TabRow(selectedTabIndex = tab) {
-                        Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Favorite A") })
-                        Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Favorite B") })
+                        Tab(selected = tab == 0, onClick = { tab = 0 },
+                            text = { Text("Favorite A") })
+                        Tab(selected = tab == 1, onClick = { tab = 1 },
+                            text = { Text("Favorite B") })
                     }
                     Spacer(Modifier.height(8.dp))
                     if (favorites.isEmpty()) {
@@ -699,16 +894,13 @@ private fun FavoriteDialog(
                         }
                     }
                     TextButton(
-                        onClick = {
-                            formState = FavoriteFormState(null, "", null, null)
-                        },
+                        onClick = { formState = FavoriteFormState(null, "", null, null) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("+ Tambah Favorite ${category.name}")
                     }
                 }
             } else {
-                // ===== MODE FORM (TAMBAH / EDIT) =====
                 FavoriteForm(
                     category = category,
                     form = formState!!,
@@ -730,7 +922,6 @@ private fun FavoriteDialog(
     )
 }
 
-/** Item daftar favorit: tap nama = play; tombol edit & hapus di kanan */
 @Composable
 private fun FavoriteListItem(
     favorite: FavoritePoint,
@@ -784,7 +975,6 @@ private fun FavoriteListItem(
     }
 }
 
-/** Form tambah/edit favorit: tab Dari Pin (read-only) / Manual (input bebas) */
 @Composable
 private fun FavoriteForm(
     category: PointCategory,
@@ -793,7 +983,6 @@ private fun FavoriteForm(
     onCancel: () -> Unit,
     onSubmit: (index: Int?, name: String, location: LocationData) -> Unit
 ) {
-    // Tambah → default tab "Dari Pin"; Edit → default "Manual" (terisi nilai lama)
     var srcTab by remember { mutableStateOf(if (form.editIndex == null) 0 else 1) }
     var name by remember { mutableStateOf(form.initialName) }
     var latText by remember { mutableStateOf(form.initialLat?.toString() ?: "") }
@@ -819,8 +1008,7 @@ private fun FavoriteForm(
             value = name,
             onValueChange = { name = it },
             label = { Text("Nama favorit") },
-            singleLine = true,
-            isError = name.isNotEmpty() && name.isBlank()
+            singleLine = true
         )
         if (srcTab == 0) {
             OutlinedTextField(
@@ -891,7 +1079,7 @@ private fun JitterDialog(
     onToggleJitter: (PointCategory) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var tab by remember { mutableStateOf(0) } // 0 = A, 1 = B
+    var tab by remember { mutableStateOf(0) }
     val target = if (tab == 0) PointCategory.A else PointCategory.B
     val config = if (tab == 0) configA else configB
     val pointActive = if (tab == 0) isPointActiveA else isPointActiveB
@@ -912,7 +1100,8 @@ private fun JitterDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Jitter ${target.name} aktif", style = MaterialTheme.typography.bodyMedium)
+                    Text("Jitter ${target.name} aktif",
+                        style = MaterialTheme.typography.bodyMedium)
                     Switch(
                         checked = jitterActive,
                         enabled = pointActive,
@@ -921,7 +1110,7 @@ private fun JitterDialog(
                 }
                 if (!pointActive) {
                     Text(
-                        text = "Tekan Play ${target.name} terlebih dahulu untuk mengaktifkan jitter.",
+                        text = "Tekan Play ${target.name} terlebih dahulu.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -964,9 +1153,7 @@ private fun JitterDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Selesai") }
-        }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Selesai") } }
     )
 }
 
@@ -999,14 +1186,12 @@ private fun DraggablePanel(
         val currentPanelSize by rememberUpdatedState(panelSize)
         val currentPad by rememberUpdatedState(padPx)
 
-        /** Posisi dasar (tanpa drag) sesuai anchor */
         fun basePos(pw: Float, ph: Float, sw: Float, sh: Float, pad: Float): Offset =
             when (anchor) {
                 PanelAnchor.BottomCenter -> Offset((sw - pw) / 2f, sh - ph - pad)
                 PanelAnchor.CenterEnd -> Offset(sw - pw - pad, (sh - ph) / 2f)
             }
 
-        // Pulihkan posisi drag yang tersimpan (sekali, setelah panel terukur)
         LaunchedEffect(savedOffset, panelSize) {
             if (isOffsetApplied) return@LaunchedEffect
             if (panelSize == IntSize.Zero || savedOffset == null) return@LaunchedEffect
@@ -1021,7 +1206,6 @@ private fun DraggablePanel(
             isOffsetApplied = true
         }
 
-        // Saat ukuran layar/panel berubah (rotasi): cukup clamp posisi.
         LaunchedEffect(screenW, screenH, panelSize) {
             if (panelSize == IntSize.Zero) return@LaunchedEffect
             val base = basePos(
@@ -1056,21 +1240,25 @@ private fun DraggablePanel(
                             onDragStart = { isDragging = true },
                             onDragEnd = {
                                 isDragging = false
-                                onOffsetChanged(dragOffset) // simpan posisi ke disk
+                                onOffsetChanged(dragOffset)
                             },
                             onDragCancel = { isDragging = false }
                         ) { change, dragAmount ->
                             change.consume()
                             val size = currentPanelSize
-                            if (size == IntSize.Zero || size.width == 0) return@detectDragGestures
+                            if (size == IntSize.Zero || size.width == 0) {
+                                return@detectDragGestures
+                            }
                             val base = basePos(
                                 size.width.toFloat(), size.height.toFloat(),
                                 currentScreenW, currentScreenH, currentPad
                             )
                             val maxX = (currentScreenW - size.width).coerceAtLeast(0f)
                             val maxY = (currentScreenH - size.height).coerceAtLeast(0f)
-                            val absX = (base.x + dragOffset.x + dragAmount.x).coerceIn(0f, maxX)
-                            val absY = (base.y + dragOffset.y + dragAmount.y).coerceIn(0f, maxY)
+                            val absX = (base.x + dragOffset.x + dragAmount.x)
+                                .coerceIn(0f, maxX)
+                            val absY = (base.y + dragOffset.y + dragAmount.y)
+                                .coerceIn(0f, maxY)
                             dragOffset = Offset(absX - base.x, absY - base.y)
                         }
                     } else Modifier
@@ -1083,7 +1271,6 @@ private fun DraggablePanel(
 
 // ================== KONTEN PANEL ==================
 
-/** Panel 1: A / B / lock / Fav / Jitter (vertikal) */
 @Composable
 private fun TrackPanelContent(
     isLocked: Boolean,
@@ -1122,7 +1309,6 @@ private fun TrackPanelContent(
     }
 }
 
-/** Panel 2: AutoFocus / lock / ZoomIn / ZoomOut (vertikal) */
 @Composable
 private fun ZoomPanelContent(
     isLocked: Boolean,
@@ -1178,7 +1364,10 @@ private fun PanelDivider() {
 
 @Composable
 private fun TrackButton(label: String, isActive: Boolean, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(52.dp)) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(52.dp)
+    ) {
         Surface(
             onClick = onClick,
             shape = CircleShape,
@@ -1204,7 +1393,6 @@ private fun TrackButton(label: String, isActive: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Tombol panel dengan label: dipakai Favorite & Jitter */
 @Composable
 private fun LabeledIconButton(
     label: String,
@@ -1212,7 +1400,10 @@ private fun LabeledIconButton(
     isActive: Boolean,
     onClick: () -> Unit
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(52.dp)) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(52.dp)
+    ) {
         Surface(
             onClick = onClick,
             shape = CircleShape,
@@ -1281,7 +1472,7 @@ private fun LockButton(isLocked: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** Getaran halus saat panel tidak terkunci = tanda panel bisa digeser */
+/** Getaran halus saat panel tidak terkunci */
 @Composable
 private fun Modifier.shakeIfUnlocked(unlocked: Boolean): Modifier {
     val transition = rememberInfiniteTransition(label = "shake")
@@ -1296,8 +1487,3 @@ private fun Modifier.shakeIfUnlocked(unlocked: Boolean): Modifier {
     )
     return if (unlocked) graphicsLayer { rotationZ = angle } else this
 }
-
-private fun hasLocationPermission(context: Context): Boolean =
-    PERMISSIONS.all {
-        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-    }
