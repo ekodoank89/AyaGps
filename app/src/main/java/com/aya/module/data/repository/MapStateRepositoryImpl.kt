@@ -2,6 +2,7 @@ package com.aya.module.data.repository
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.aya.module.core.ConfigPusher
 import com.aya.module.domain.model.FavoritePoint
 import com.aya.module.domain.model.JitterConfig
 import com.aya.module.domain.model.LocationData
