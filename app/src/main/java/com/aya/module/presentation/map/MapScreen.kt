@@ -279,6 +279,105 @@ private fun PermissionsGate(onAllGranted: () -> Unit) {
                 tonalElevation = 2.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
+/**
+ * Gerbang izin: diminta BERURUTAN (lokasi → lokasi background → notifikasi → baterai)
+ * dan tiap langkah di-CHECK ULANG; alur tidak lanjut sebelum status sesuai.
+ * Setelah semua izin sesuai, `content` (peta) ditampilkan.
+ */
+@Composable
+private fun PermissionsGate(
+    onAllGranted: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    val context = LocalContext.current
+    var step by remember { mutableStateOf(currentPermStep(context)) }
+    var attempted by remember { mutableStateOf(false) }
+
+    LaunchedEffect(step) {
+        if (step == PermStep.DONE) onAllGranted()
+    }
+
+    val fineLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ -> step = currentPermStep(context) }
+    val bgLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> step = currentPermStep(context) }
+    val notifLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> step = currentPermStep(context) }
+    val batteryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ -> step = currentPermStep(context) }
+
+    fun requestCurrent() {
+        attempted = true
+        when (step) {
+            PermStep.FINE -> fineLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+            PermStep.BACKGROUND -> bgLauncher.launch(
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            )
+            PermStep.NOTIFICATION -> notifLauncher.launch(
+                Manifest.permission.POST_NOTIFICATIONS
+            )
+            PermStep.BATTERY -> {
+                val intent = Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${context.packageName}")
+                )
+                try {
+                    batteryLauncher.launch(intent)
+                } catch (_: Exception) {
+                    context.startActivity(
+                        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    )
+                }
+            }
+            PermStep.DONE -> {}
+        }
+    }
+
+    // Semua izin sudah sesuai → tampilkan konten utama (peta)
+    if (step == PermStep.DONE) {
+        content()
+        return
+    }
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Filled.LocationOn,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(56.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+            Text("Izin yang Diperlukan", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "AYA GPS membutuhkan izin berikut, diminta berurutan " +
+                        "dan diperiksa ulang sampai sesuai.",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(24.dp))
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     permItems(context).forEachIndexed { index, item ->
                         Row(
@@ -314,31 +413,29 @@ private fun PermissionsGate(onAllGranted: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(24.dp))
-            if (step != PermStep.DONE) {
-                Button(onClick = { requestCurrent() }) {
-                    Text(
-                        when (step) {
-                            PermStep.FINE -> "Izinkan Lokasi"
-                            PermStep.BACKGROUND -> "Izinkan Sepanjang Waktu"
-                            PermStep.NOTIFICATION -> "Izinkan Notifikasi"
-                            PermStep.BATTERY -> "Buka Setelan Baterai"
-                            PermStep.DONE -> ""
-                        }
-                    )
-                }
-                if (attempted) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Belum sesuai? Tekan tombol lagi atau \"Periksa Ulang\" " +
-                                "setelah mengubah setelan.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = { step = currentPermStep(context) }) {
-                        Text("Periksa Ulang")
+            Button(onClick = { requestCurrent() }) {
+                Text(
+                    when (step) {
+                        PermStep.FINE -> "Izinkan Lokasi"
+                        PermStep.BACKGROUND -> "Izinkan Sepanjang Waktu"
+                        PermStep.NOTIFICATION -> "Izinkan Notifikasi"
+                        PermStep.BATTERY -> "Buka Setelan Baterai"
+                        PermStep.DONE -> ""
                     }
+                )
+            }
+            if (attempted) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Belum sesuai? Tekan tombol lagi atau \"Periksa Ulang\" " +
+                            "setelah mengubah setelan.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { step = currentPermStep(context) }) {
+                    Text("Periksa Ulang")
                 }
             }
         }
