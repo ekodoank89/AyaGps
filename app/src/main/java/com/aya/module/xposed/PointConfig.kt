@@ -8,10 +8,10 @@ import kotlin.math.cos
 import kotlin.math.sqrt
 
 /**
- * Satu sumber kebenaran koordinat: titik A dulu, jika tidak aktif pakai B.
- * Membaca prefs "aya_map_state" milik aplikasi AyaGps (com.aya.module).
+ * Sumber koordinat untuk SATU kategori titik ("a" = Gojek, "b" = Grab).
+ * Membaca prefs "aya_map_state" milik aplikasi AYA HOTSPOT (com.aya.module).
  */
-class PointConfig {
+class PointConfig(private val cat: String) {
 
     private val xsp by lazy { XSharedPreferences(MODULE_PACKAGE, PREFS_NAME) }
 
@@ -51,13 +51,12 @@ class PointConfig {
         // Debug isi prefs — untuk verifikasi pembacaan dari proses target
         val a = sp.getBoolean("active_a", false)
         val b = sp.getBoolean("active_b", false)
-        XposedBridge.log("AYAGPS: debug prefs → active_a=$a active_b=$b")
+        XposedBridge.log("AYAGPS: debug prefs [$cat] → active_a=$a active_b=$b")
 
-        val cat = if (a) "a" else "b"
         val lat = sp.getString("lat_$cat", null)?.toDoubleOrNull() ?: Double.NaN
         val lng = sp.getString("lng_$cat", null)?.toDoubleOrNull() ?: Double.NaN
 
-        // Config jitter disimpan app sebagai float/int
+        // Config jitter kategori ini (disimpan app sebagai float/int)
         jStep = sp.getFloat("jitter_step_$cat", 3f)
         jWin = sp.getInt("jitter_interval_$cat", 5)
         jRadius = sp.getFloat("jitter_radius_$cat", 4f)
@@ -69,7 +68,7 @@ class PointConfig {
             blng = lng
         }
 
-        val newActive = a || b
+        val newActive = sp.getBoolean("active_$cat", false)
         val changed = newActive != active || bl != baseLat || blng != baseLng
         active = newActive
         baseLat = bl
@@ -84,7 +83,7 @@ class PointConfig {
                         "jitter: $jStep m / $jWin dtk / R$jRadius m"
                 )
             } else {
-                XposedBridge.log("AYAGPS: spoof dimatikan")
+                XposedBridge.log("AYAGPS: spoof dimatikan ($cat)")
             }
         }
     }
