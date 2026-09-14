@@ -16,7 +16,7 @@ import com.aya.module.domain.repository.MapStateRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-class MapStateRepositoryImpl(context: Context) : MapStateRepository {
+class MapStateRepositoryImpl(private val context: Context) : MapStateRepository {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
