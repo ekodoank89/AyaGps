@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AYA GPS</string>
-    <string name="perm_title">Izin yang Diperlukan</string>
-    <string name="perm_desc">AYA GPS membutuhkan 3 izin agar bekerja optimal. Izin akan diminta berurutan dan diperiksa ulang sampai sesuai.</string>
 </resources>
