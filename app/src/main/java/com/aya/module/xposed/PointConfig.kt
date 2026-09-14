@@ -1,6 +1,8 @@
 package com.aya.module.xposed
 
+import android.app.Application
 import android.location.Location
+import android.net.Uri
 import de.robv.android.xposed.XSharedPreferences
 import de.robv.android.xposed.XposedBridge
 import java.util.Random
@@ -8,8 +10,8 @@ import kotlin.math.cos
 import kotlin.math.sqrt
 
 /**
- * Sumber koordinat untuk SATU kategori titik ("a" = Gojek, "b" = Grab).
- * Membaca prefs "aya_map_state" milik aplikasi AYA HOTSPOT (com.aya.module).
+ * Sumber koordinat untuk SATU kategori ("a" = Gojek, "b" = Grab).
+ * Rantai pembacaan (pola modul AYA): remote (ContentProvider) → XSP fallback.
  */
 class PointConfig(private val cat: String) {
 
@@ -26,6 +28,7 @@ class PointConfig(private val cat: String) {
     private val jitter = Jitter()
 
     private var loggedActive = false
+    private var loggedRemoteFail = false
 
     fun latitude(): Double? = jittered()?.first
     fun longitude(): Double? = jittered()?.second
@@ -39,53 +42,91 @@ class PointConfig(private val cat: String) {
     private fun refresh(now: Long) {
         if (now - lastReload < RELOAD_INTERVAL_MS) return
         lastReload = now
+        if (readRemote()) return
+        readXsp()
+    }
 
-        val sp = try {
-            xsp.reload()
-            xsp
+    // ===== Jalur 1: ContentProvider milik aplikasi AYA HOTSPOT =====
+    private fun readRemote(): Boolean {
+        return try {
+            val app = currentApplication() ?: return false
+            val b = app.contentResolver.call(
+                Uri.parse("content://$AUTHORITY"), "getState", cat, null
+            ) ?: return false
+            applyJitter(
+                b.getFloat("jit_step", 3f),
+                b.getInt("jit_win", 5),
+                b.getFloat("jit_radius", 4f)
+            )
+            applyState(
+                b.getBoolean("active", false),
+                b.getDouble("lat", Double.NaN),
+                b.getDouble("lng", Double.NaN)
+            )
+            true
         } catch (t: Throwable) {
-            XposedBridge.log("AYAGPS: XSharedPreferences gagal: $t")
-            return
+            if (!loggedRemoteFail) {
+                loggedRemoteFail = true
+                XposedBridge.log("AYAGPS [$cat]: jalur remote gagal → fallback XSP: $t")
+            }
+            false
         }
+    }
 
-        // Debug isi prefs — untuk verifikasi pembacaan dari proses target
-        val a = sp.getBoolean("active_a", false)
-        val b = sp.getBoolean("active_b", false)
-        XposedBridge.log("AYAGPS: debug prefs [$cat] → active_a=$a active_b=$b")
-
-        val lat = sp.getString("lat_$cat", null)?.toDoubleOrNull() ?: Double.NaN
-        val lng = sp.getString("lng_$cat", null)?.toDoubleOrNull() ?: Double.NaN
-
-        // Config jitter kategori ini (disimpan app sebagai float/int)
-        jStep = sp.getFloat("jitter_step_$cat", 3f)
-        jWin = sp.getInt("jitter_interval_$cat", 5)
-        jRadius = sp.getFloat("jitter_radius_$cat", 4f)
-
-        var bl = sp.getString("jitter_base_lat_$cat", null)?.toDoubleOrNull() ?: Double.NaN
-        var blng = sp.getString("jitter_base_lng_$cat", null)?.toDoubleOrNull() ?: Double.NaN
-        if (bl.isNaN() || blng.isNaN()) {
-            bl = lat
-            blng = lng
+    // ===== Jalur 2 (fallback): XSharedPreferences =====
+    private fun readXsp(): Boolean {
+        return try {
+            xsp.reload()
+            applyJitter(
+                xsp.getFloat("jitter_step_$cat", 3f),
+                xsp.getInt("jitter_interval_$cat", 5),
+                xsp.getFloat("jitter_radius_$cat", 4f)
+            )
+            applyState(
+                xsp.getBoolean("active_$cat", false),
+                xsp.getString("jitter_base_lat_$cat", null)?.toDoubleOrNull()
+                    ?: xsp.getString("lat_$cat", null)?.toDoubleOrNull() ?: Double.NaN,
+                xsp.getString("jitter_base_lng_$cat", null)?.toDoubleOrNull()
+                    ?: xsp.getString("lng_$cat", null)?.toDoubleOrNull() ?: Double.NaN
+            )
+            true
+        } catch (t: Throwable) {
+            XposedBridge.log("AYAGPS [$cat]: XSP fallback juga gagal: $t")
+            false
         }
+    }
 
-        val newActive = sp.getBoolean("active_$cat", false)
-        val changed = newActive != active || bl != baseLat || blng != baseLng
-        active = newActive
-        baseLat = bl
-        baseLng = blng
-        if (changed) jitter.onBaseChanged(bl, blng)
+    private fun applyJitter(step: Float, win: Int, radius: Float) {
+        jStep = step
+        jWin = win
+        jRadius = radius
+    }
 
-        if (active != loggedActive) {
-            loggedActive = active
-            if (active) {
+    private fun applyState(a: Boolean, la: Double, ln: Double) {
+        val changed = a != active || la != baseLat || ln != baseLng
+        active = a
+        if (!la.isNaN()) baseLat = la
+        if (!ln.isNaN()) baseLng = ln
+        if (changed) jitter.onBaseChanged(baseLat, baseLng)
+        if (a != loggedActive) {
+            loggedActive = a
+            if (a) {
                 XposedBridge.log(
-                    "AYAGPS: spoof AKTIF (${cat.uppercase()}) → $bl, $blng | " +
+                    "AYAGPS: spoof AKTIF (${cat.uppercase()}) → $baseLat, $baseLng | " +
                         "jitter: $jStep m / $jWin dtk / R$jRadius m"
                 )
             } else {
                 XposedBridge.log("AYAGPS: spoof dimatikan ($cat)")
             }
         }
+    }
+
+    private fun currentApplication(): Application? = try {
+        Class.forName("android.app.ActivityThread")
+            .getMethod("currentApplication")
+            .invoke(null) as? Application
+    } catch (t: Throwable) {
+        null
     }
 
     /** Tulis fake langsung ke field — distanceTo, toString ikut konsisten */
@@ -144,6 +185,7 @@ class PointConfig(private val cat: String) {
     companion object {
         private const val MODULE_PACKAGE = "com.aya.module"
         private const val PREFS_NAME = "aya_map_state"
+        private const val AUTHORITY = "com.aya.module.config"
         private const val RELOAD_INTERVAL_MS = 1000L
     }
 }
