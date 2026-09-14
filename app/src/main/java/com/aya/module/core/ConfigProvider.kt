@@ -1,4 +1,4 @@
-package com.aya.module.provider
+package com.aya.module
 
 import android.content.ContentProvider
 import android.content.ContentValues
@@ -13,28 +13,45 @@ class ConfigProvider : ContentProvider() {
     private lateinit var prefs: SharedPreferences
 
     override fun onCreate(): Boolean {
-        prefs = context!!.getSharedPreferences("aya_gps_prefs", Context.MODE_PRIVATE)
+        context?.let {
+            prefs = it.getSharedPreferences("location_config", Context.MODE_PRIVATE)
+        }
         return true
     }
 
     override fun query(
-        uri: Uri, projection: Array<String>?, selection: String?,
-        selectionArgs: Array<String>?, sortOrder: String?
+        uri: Uri,
+        projection: Array<out String>?,
+        selection: String?,
+        selectionArgs: Array<out String>?,
+        sortOrder: String?
     ): Cursor {
-        // Buat cursor virtual di memori untuk mengirimkan data ke aplikasi driver
-        val cursor = MatrixCursor(arrayOf("active", "lat", "lng"))
-        
-        val isActive = prefs.getBoolean("active", false)
-        val lat = prefs.getFloat("lat", 0.0f)
-        val lng = prefs.getFloat("lng", 0.0f)
-        
-        cursor.addRow(arrayOf(if (isActive) 1 else 0, lat, lng))
+        val cursor = MatrixCursor(arrayOf("active", "latitude", "longitude"))
+        val active = prefs.getBoolean("active", false)
+        val lat = prefs.getFloat("latitude", 0.0f)
+        val lng = prefs.getFloat("longitude", 0.0f)
+
+        cursor.addRow(arrayOf(if (active) 1 else 0, lat, lng))
         return cursor
     }
 
-    // Fungsi insert, delete, update bisa dikosongkan atau disesuaikan jika modul butuh mengubah data dari sisi driver
-    override fun getType(uri: Uri): String? = null
-    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
-    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<String>?): Int = 0
-    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<String>?): Int = 0
+    override fun getType(uri: Uri): String? = "vnd.android.cursor.dir/vnd.com.aya.module.config"
+
+    override fun insert(uri: Uri, values: ContentValues?): Uri? {
+        values?.let {
+            val editor = prefs.edit()
+            if (it.containsKey("active")) editor.putBoolean("active", it.getAsBoolean("active"))
+            if (it.containsKey("latitude")) editor.putFloat("latitude", it.getAsFloat("latitude"))
+            if (it.containsKey("longitude")) editor.putFloat("longitude", it.getAsFloat("longitude"))
+            editor.apply()
+        }
+        return uri
+    }
+
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
+
+    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int {
+        insert(uri, values)
+        return 1
+    }
 }
