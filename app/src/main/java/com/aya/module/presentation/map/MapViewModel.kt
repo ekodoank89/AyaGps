@@ -81,7 +81,6 @@ class MapViewModel(
         when (intent) {
             MapIntent.PermissionGranted -> _state.update { it.copy(hasPermission = true) }
             MapIntent.PermissionDenied -> _state.update { it.copy(hasPermission = false) }
-            MapIntent.PermissionsFlowDone -> _state.update { it.copy(permissionsFlowDone = true) }
 
             is MapIntent.ToggleA -> togglePlay(PointCategory.A, intent.pinLocation)
             is MapIntent.ToggleB -> togglePlay(PointCategory.B, intent.pinLocation)
@@ -109,7 +108,7 @@ class MapViewModel(
                     val updated = current.toMutableList().apply {
                         if (intent.index >= 0 && intent.index < size) removeAt(intent.index)
                     }
-                    if (intent.category == PointsCategory.A) s.copy(favoritesA = updated)
+                    if (intent.category == PointCategory.A) s.copy(favoritesA = updated)
                     else s.copy(favoritesB = updated)
                 }
                 persistPoints()
@@ -314,4 +313,57 @@ class MapViewModel(
         }
     }
 
-    private fun persistLocks() { ... }  // TIDAK BERUBAH dari versi sebelumnya
+    private fun persistLocks() {
+        val s = _state.value
+        viewModelScope.launch {
+            mapStateRepository.savePanelLocks(
+                SavedPanelLocks(
+                    trackLocked = s.isTrackPanelLocked,
+                    zoomLocked = s.isZoomPanelLocked
+                )
+            )
+        }
+    }
+
+    private fun persistPanelOffsets() {
+        val s = _state.value
+        viewModelScope.launch {
+            mapStateRepository.savePanelOffsets(
+                SavedPanelOffsets(
+                    track = s.trackPanelOffset,
+                    zoom = s.zoomPanelOffset
+                )
+            )
+        }
+    }
+
+    private fun persistJitter() {
+        val s = _state.value
+        viewModelScope.launch {
+            mapStateRepository.saveJitter(
+                SavedJitterState(
+                    configA = s.jitterConfigA,
+                    configB = s.jitterConfigB,
+                    isActiveA = s.isJitterActiveA,
+                    baseA = s.jitterBaseA,
+                    isActiveB = s.isJitterActiveB,
+                    baseB = s.jitterBaseB
+                )
+            )
+        }
+    }
+
+    private fun persistJitterDebounced() {
+        jitterPersistJob?.cancel()
+        jitterPersistJob = viewModelScope.launch {
+            delay(400)
+            persistJitter()
+        }
+    }
+
+    override fun onCleared() {
+        jitterJobA?.cancel()
+        jitterJobB?.cancel()
+        super.onCleared()
+    }
+}
