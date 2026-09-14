@@ -32,6 +32,7 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
             editor.putString(KEY_LNG_B, state.pointB?.longitude?.toString())
             putFavorites(editor, PREFIX_FAV_A, state.favoritesA)
             putFavorites(editor, PREFIX_FAV_B, state.favoritesB)
+            editor.putBoolean(KEY_PIN_CHIP_VISIBLE, state.isPinChipVisible)
             editor.commit()
         }
     }
@@ -44,6 +45,7 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
             pointB = readPoint(KEY_LAT_B, KEY_LNG_B),
             favoritesA = readFavorites(PREFIX_FAV_A),
             favoritesB = readFavorites(PREFIX_FAV_B)
+            isPinChipVisible = prefs.getBoolean(KEY_PIN_CHIP_VISIBLE, true)
         )
     }
 
@@ -227,5 +229,6 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         const val KEY_JITTER_ACTIVE_B = "jitter_active_b"
         const val KEY_JITTER_BASE_LAT_B = "jitter_base_lat_b"
         const val KEY_JITTER_BASE_LNG_B = "jitter_base_lng_b"
+        const val KEY_PIN_CHIP_VISIBLE = "pin_chip_visible"
     }
 }
