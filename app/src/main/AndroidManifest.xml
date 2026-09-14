@@ -7,9 +7,9 @@
         android:icon="@mipmap/ic_launcher"
         android:label="Aya Module"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat">
+        android:theme="@style/Theme.AppCompat.NoActionBar">
 
-        <!-- Flag Modul Xposed/LSPosed -->
+        <!-- Flag Modul LSPosed -->
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
