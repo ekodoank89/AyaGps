@@ -9,7 +9,7 @@ import com.aya.module.domain.model.SavedCameraState
 /** Zoom saat auto-focus ke posisi GPS user */
 const val FOCUS_ZOOM = 17f
 
-/** Kategori titik (dipakai jitter & favorite) */
+/** Kategori titik (A = Gojek, B = Grab) */
 enum class PointCategory { A, B }
 
 /** Perintah kamera satu-shot dari ViewModel ke UI */
@@ -24,7 +24,6 @@ sealed interface MapCameraEvent {
 /** ===== UI STATE ===== */
 data class MapUiState(
     val hasPermission: Boolean = false,
-    val permissionsFlowDone: Boolean = false,
     val isActiveA: Boolean = false,
     val pointA: LocationData? = null,
     val isActiveB: Boolean = false,
@@ -49,7 +48,6 @@ data class MapUiState(
 sealed interface MapIntent {
     data object PermissionGranted : MapIntent
     data object PermissionDenied : MapIntent
-    data object PermissionsFlowDone : MapIntent
     data class ToggleA(val pinLocation: LocationData) : MapIntent
     data class ToggleB(val pinLocation: LocationData) : MapIntent
     data class SaveFavorite(
