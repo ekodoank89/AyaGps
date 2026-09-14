@@ -10,16 +10,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Entry point Xposed (Legacy API).
- * TIDAK berjalan di aplikasi AyaGps — di-load LSPosed ke proses aplikasi target.
+ * Mapping target:
+ *   A → com.gojek.partner (Gojek Partner)
+ *   B → com.grabtaxi.driver2 (Grab Driver)
  */
 class AyaGpsHookEntry : IXposedHookLoadPackage {
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        if (lpparam.packageName == MODULE_PACKAGE) return
+        val category = CATEGORY_BY_TARGET[lpparam.packageName] ?: return
 
-        XposedBridge.log("AYAGPS: hook terpasang di '${lpparam.packageName}'")
+        XposedBridge.log("AYAGPS: hook terpasang di '${lpparam.packageName}' (kategori: $category)")
 
-        val config = PointConfig()
+        val config = PointConfig(category)
 
         hookLocationGetters(lpparam.classLoader, config)
         hookLastKnownLocation(lpparam.classLoader, config)
@@ -99,7 +101,12 @@ class AyaGpsHookEntry : IXposedHookLoadPackage {
     }
 
     companion object {
-        private const val MODULE_PACKAGE = "com.aya.module"
         private const val GMS_LOCATION_RESULT = "com.google.android.gms.location.LocationResult"
+
+        /** Mapping package target → kategori titik (a/b) */
+        private val CATEGORY_BY_TARGET = mapOf(
+            "com.gojek.partner" to "a",
+            "com.grabtaxi.driver2" to "b"
+        )
     }
 }
