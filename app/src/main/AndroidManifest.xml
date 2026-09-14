@@ -42,7 +42,8 @@
         <provider
             android:name="com.aya.module.core.AyaConfigProvider"
             android:authorities="com.aya.module.config"
-            android:exported="true" />
+            android:exported="true"
+            android:multiprocess="true" />
 
         <activity
             android:name=".MainActivity"
