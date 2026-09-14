@@ -44,19 +44,18 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
             isActiveB = prefs.getBoolean(KEY_ACTIVE_B, false),
             pointB = readPoint(KEY_LAT_B, KEY_LNG_B),
             favoritesA = readFavorites(PREFIX_FAV_A),
-            favoritesB = readFavorites(PREFIX_FAV_B)
+            favoritesB = readFavorites(PREFIX_FAV_B),
             isPinChipVisible = prefs.getBoolean(KEY_PIN_CHIP_VISIBLE, true)
         )
     }
 
-    // ===== Serialisasi daftar favorit (index keys, aman terhadap duplikat nama) =====
+    // ===== Serialisasi daftar favorit (index keys) =====
 
     private fun putFavorites(
         editor: SharedPreferences.Editor,
         prefix: String,
         list: List<FavoritePoint>
     ) {
-        // Bersihkan entri lama (jumlah bisa berkurang)
         val oldCount = prefs.getInt("${prefix}_count", 0)
         for (i in 0 until oldCount) editor.remove("${prefix}_$i")
         editor.putInt("${prefix}_count", list.size)
@@ -207,6 +206,7 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         const val KEY_LNG_B = "lng_b"
         const val PREFIX_FAV_A = "fav_a"
         const val PREFIX_FAV_B = "fav_b"
+        const val KEY_PIN_CHIP_VISIBLE = "pin_chip_visible"
         const val KEY_TRACK_LOCKED = "track_panel_locked"
         const val KEY_ZOOM_LOCKED = "zoom_panel_locked"
         const val KEY_TRACK_OFF_X = "track_off_x"
@@ -229,6 +229,5 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
         const val KEY_JITTER_ACTIVE_B = "jitter_active_b"
         const val KEY_JITTER_BASE_LAT_B = "jitter_base_lat_b"
         const val KEY_JITTER_BASE_LNG_B = "jitter_base_lng_b"
-        const val KEY_PIN_CHIP_VISIBLE = "pin_chip_visible"
     }
 }
