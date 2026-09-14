@@ -2,7 +2,6 @@ package com.aya.module
 
 import android.content.Context
 import android.database.Cursor
-import android.location.Location
 import android.net.Uri
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
@@ -22,7 +21,6 @@ class MainHook : IXposedHookLoadPackage {
 
         XposedBridge.log("AyaModule: Hooking ke paket ${lpparam.packageName}")
 
-        // Hook fungsi getLatitude
         XposedHelpers.findAndHookMethod(
             "android.location.Location",
             lpparam.classLoader,
@@ -37,7 +35,6 @@ class MainHook : IXposedHookLoadPackage {
             }
         )
 
-        // Hook fungsi getLongitude
         XposedHelpers.findAndHookMethod(
             "android.location.Location",
             lpparam.classLoader,
