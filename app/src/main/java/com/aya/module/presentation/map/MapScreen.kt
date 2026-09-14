@@ -1,10 +1,8 @@
 package com.aya.module.presentation.map
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -81,7 +79,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -149,7 +146,7 @@ private data class FavoriteFormState(
     val initialLng: Double?
 )
 
-// ================== GERBANG IZIN BERURUTAN (DOUBLE-CHECK) ==================
+// ================== IZIN (GERBANG BERURUTAN + DOUBLE-CHECK) ==================
 
 private enum class PermStep { FINE, BACKGROUND, NOTIFICATION, BATTERY, DONE }
 
@@ -162,11 +159,10 @@ private fun hasBackground(c: Context) = Build.VERSION.SDK_INT < Build.VERSION_CO
         c, Manifest.permission.ACCESS_BACKGROUND_LOCATION
     ) == PackageManager.PERMISSION_GRANTED
 
-private fun needsNotif(c: Context) = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-
-private fun hasNotif(c: Context) = !needsNotif(c) || ContextCompat.checkSelfPermission(
-    c, Manifest.permission.POST_NOTIFICATIONS
-) == PackageManager.PERMISSION_GRANTED
+private fun hasNotif(c: Context) = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+    ContextCompat.checkSelfPermission(
+        c, Manifest.permission.POST_NOTIFICATIONS
+    ) == PackageManager.PERMISSION_GRANTED
 
 private fun batteryExempt(c: Context): Boolean {
     val pm = c.getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -186,103 +182,13 @@ private data class PermItem(val label: String, val done: Boolean, val required: 
 private fun permItems(c: Context): List<PermItem> = listOf(
     PermItem("Lokasi (saat dipakai)", hasFine(c), true),
     PermItem("Lokasi (sepanjang waktu)", hasBackground(c), true),
-    PermItem("Notifikasi", hasNotif(c), needsNotif(c)),
+    PermItem("Notifikasi", hasNotif(c), Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU),
     PermItem("Baterai tidak dibatasi", batteryExempt(c), true)
 )
 
 /**
- * Gerbang izin: diminta BERURUTAN (lokasi → lokasi background → notifikasi → baterai)
- * dan tiap langkah di-CHECK ULANG; alur tidak lanjut sebelum status sesuai.
- */
-@Composable
-private fun PermissionsGate(onAllGranted: () -> Unit) {
-    val context = LocalContext.current
-    var step by remember { mutableStateOf(currentPermStep(context)) }
-    var attempted by remember(step) { mutableStateOf(false) }
-
-    LaunchedEffect(step) {
-        if (step == PermStep.DONE) onAllGranted()
-    }
-
-    val fineLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ -> step = currentPermStep(context) }
-    val bgLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ -> step = currentPermStep(context) }
-    val notifLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ -> step = currentPermStep(context) }
-    val batteryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { _ -> step = currentPermStep(context) }
-
-    fun requestCurrent() {
-        attempted = true
-        when (step) {
-            PermStep.FINE -> fineLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
-            PermStep.BACKGROUND -> bgLauncher.launch(
-                Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            )
-            PermStep.NOTIFICATION -> notifLauncher.launch(
-                Manifest.permission.POST_NOTIFICATIONS
-            )
-            PermStep.BATTERY -> {
-                val intent = Intent(
-                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:${context.packageName}")
-                )
-                try {
-                    batteryLauncher.launch(intent)
-                } catch (_: Exception) {
-                    context.startActivity(
-                        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                    )
-                }
-            }
-            PermStep.DONE -> {}
-        }
-    }
-
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.LocationOn,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text("Izin yang Diperlukan", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "AYA GPS membutuhkan izin berikut, diminta berurutan " +
-                        "dan diperiksa ulang sampai sesuai.",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(24.dp))
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-/**
- * Gerbang izin: diminta BERURUTAN (lokasi → lokasi background → notifikasi → baterai)
- * dan tiap langkah di-CHECK ULANG; alur tidak lanjut sebelum status sesuai.
- * Setelah semua izin sesuai, `content` (peta) ditampilkan.
+ * Gerbang izin: diminta BERURUTAN (lokasi → background → notifikasi → baterai),
+ * tiap langkah diperiksa ulang sampai sesuai, lalu peta ditampilkan.
  */
 @Composable
 private fun PermissionsGate(
@@ -342,7 +248,6 @@ private fun PermissionsGate(
         }
     }
 
-    // Semua izin sudah sesuai → tampilkan konten utama (peta)
     if (step == PermStep.DONE) {
         content()
         return
@@ -464,7 +369,6 @@ fun MapScreen() {
     PermissionsGate(
         onAllGranted = { viewModel.onIntent(MapIntent.PermissionGranted) }
     ) {
-        // Pulihkan posisi kamera/pin terakhir dari disk (sekali, setelah data dimuat)
         var cameraRestored by remember { mutableStateOf(false) }
         LaunchedEffect(state.cameraState) {
             val saved = state.cameraState ?: return@LaunchedEffect
@@ -476,7 +380,6 @@ fun MapScreen() {
             }
         }
 
-        // Perintah kamera satu-shot
         LaunchedEffect(Unit) {
             viewModel.events.collect { event ->
                 when (event) {
@@ -493,7 +396,6 @@ fun MapScreen() {
             }
         }
 
-        // Simpan posisi kamera/pin terakhir saat aplikasi ditinggalkan (ON_PAUSE)
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
@@ -541,7 +443,6 @@ fun MapScreen() {
                 onFocusB = { viewModel.onIntent(MapIntent.FocusPointB) }
             )
 
-            // ===== PANEL 1: A / B / lock / Fav / Jitter =====
             DraggablePanel(
                 anchor = PanelAnchor.BottomCenter,
                 anchorPadding = 40.dp,
@@ -573,7 +474,6 @@ fun MapScreen() {
                 )
             }
 
-            // ===== PANEL 2: AutoFocus / lock / ZoomIn / ZoomOut =====
             DraggablePanel(
                 anchor = PanelAnchor.CenterEnd,
                 anchorPadding = 16.dp,
@@ -604,7 +504,6 @@ fun MapScreen() {
                 )
             }
 
-            // ===== DIALOG FAVORIT =====
             if (showFavoriteDialog) {
                 FavoriteDialog(
                     pin = favoriteDialogPin ?: currentPin(),
@@ -626,7 +525,6 @@ fun MapScreen() {
                 )
             }
 
-            // ===== DIALOG JITTER =====
             if (showJitterDialog) {
                 JitterDialog(
                     configA = state.jitterConfigA,
@@ -711,7 +609,6 @@ private fun MapContent(
             }
         }
 
-        // ---- PIN TETAP DI TENGAH ----
         Icon(
             imageVector = Icons.Filled.LocationOn,
             contentDescription = "Pin tengah",
@@ -722,7 +619,6 @@ private fun MapContent(
                 .offset(y = (-24).dp)
         )
 
-        // ---- CHIP KOORDINAT PIN (ATAS TENGAH) — TAP hide/unhide, tersimpan di disk ----
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -771,7 +667,6 @@ private fun MapContent(
             }
         }
 
-        // ---- CHIP TITIK A (ATAS KIRI) ----
         if (isActiveA) {
             Box(
                 modifier = Modifier
@@ -789,7 +684,6 @@ private fun MapContent(
             }
         }
 
-        // ---- CHIP TITIK B (ATAS KANAN) ----
         if (isActiveB) {
             Box(
                 modifier = Modifier
@@ -809,7 +703,6 @@ private fun MapContent(
     }
 }
 
-/** Dua baris koordinat: baris 1 latitude, baris 2 longitude (monospace) */
 @Composable
 private fun CoordTwoLines(latitude: Double, longitude: Double) {
     Column {
@@ -829,7 +722,6 @@ private fun CoordTwoLines(latitude: Double, longitude: Double) {
     }
 }
 
-/** Chip titik A/B: badge + titik berkedip (+ label JITTER) + koordinat 2 baris */
 @Composable
 private fun PointChip(
     label: String,
@@ -1569,7 +1461,6 @@ private fun LockButton(isLocked: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** Getaran halus saat panel tidak terkunci */
 @Composable
 private fun Modifier.shakeIfUnlocked(unlocked: Boolean): Modifier {
     val transition = rememberInfiniteTransition(label = "shake")
