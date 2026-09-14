@@ -35,6 +35,7 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
             putFavorites(editor, PREFIX_FAV_B, state.favoritesB)
             editor.putBoolean(KEY_PIN_CHIP_VISIBLE, state.isPinChipVisible)
             editor.commit()
+            ConfigPusher.pushAll(context)
         }
     }
 
@@ -162,6 +163,7 @@ class MapStateRepositoryImpl(context: Context) : MapStateRepository {
                 .putString(KEY_JITTER_BASE_LAT_B, state.baseB?.latitude?.toString())
                 .putString(KEY_JITTER_BASE_LNG_B, state.baseB?.longitude?.toString())
                 .commit()
+                ConfigPusher.pushAll(context)
         }
     }
 
