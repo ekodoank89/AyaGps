@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Aplikasi target yang direkomendasikan untuk modul ini.
-         Edit sesuai kebutuhan — scope juga bisa diatur manual di LSPosed Manager. -->
+    <!-- A = Gojek Partner, B = Grab Driver -->
     <string-array name="xposed_scope">
-        <item>com.google.android.apps.maps</item>
+        <item>com.gojek.partner</item>
+        <item>com.grabtaxi.driver2</item>
     </string-array>
 </resources>
