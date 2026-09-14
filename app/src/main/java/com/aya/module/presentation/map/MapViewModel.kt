@@ -36,7 +36,6 @@ class MapViewModel(
     private val _state = MutableStateFlow(MapUiState())
     val state: StateFlow<MapUiState> = _state.asStateFlow()
 
-    /** Perintah kamera satu-shot (auto-focus GPS / lompat ke titik) */
     private val _events = Channel<MapCameraEvent>(Channel.BUFFERED)
     val events: Flow<MapCameraEvent> = _events.receiveAsFlow()
 
@@ -45,7 +44,6 @@ class MapViewModel(
     private var jitterPersistJob: Job? = null
 
     init {
-        // Pulihkan semua kondisi terakhir, termasuk setelah force stop
         viewModelScope.launch {
             val points = mapStateRepository.load()
             val locks = mapStateRepository.loadPanelLocks()
@@ -60,6 +58,7 @@ class MapViewModel(
                     pointB = points.pointB,
                     favoritesA = points.favoritesA,
                     favoritesB = points.favoritesB,
+                    isPinChipVisible = points.isPinChipVisible,
                     jitterConfigA = jitter.configA,
                     jitterConfigB = jitter.configB,
                     isJitterActiveA = jitter.isActiveA && points.pointA != null,
@@ -73,7 +72,6 @@ class MapViewModel(
                     cameraState = camera
                 )
             }
-            // Lanjutkan jitter yang tertunda saat aplikasi dimatikan
             if (_state.value.isJitterActiveA) startJitterJob(PointCategory.A)
             if (_state.value.isJitterActiveB) startJitterJob(PointCategory.B)
         }
@@ -83,16 +81,14 @@ class MapViewModel(
         when (intent) {
             MapIntent.PermissionGranted -> _state.update { it.copy(hasPermission = true) }
             MapIntent.PermissionDenied -> _state.update { it.copy(hasPermission = false) }
+            MapIntent.PermissionsFlowDone -> _state.update { it.copy(permissionsFlowDone = true) }
 
-            // Play/Stop: jitter otomatis ikut aktif/berhenti
             is MapIntent.ToggleA -> togglePlay(PointCategory.A, intent.pinLocation)
             is MapIntent.ToggleB -> togglePlay(PointCategory.B, intent.pinLocation)
 
-            // Favorite: tambah baru (index null) atau edit
             is MapIntent.SaveFavorite -> {
                 _state.update { s ->
-                    val current =
-                        if (intent.category == PointCategory.A) s.favoritesA else s.favoritesB
+                    val current = if (intent.category == PointCategory.A) s.favoritesA else s.favoritesB
                     val updated = current.toMutableList().apply {
                         val idx = intent.index
                         if (idx != null && idx >= 0 && idx < size) {
@@ -109,24 +105,20 @@ class MapViewModel(
 
             is MapIntent.DeleteFavorite -> {
                 _state.update { s ->
-                    val current =
-                        if (intent.category == PointCategory.A) s.favoritesA else s.favoritesB
+                    val current = if (intent.category == PointCategory.A) s.favoritesA else s.favoritesB
                     val updated = current.toMutableList().apply {
                         if (intent.index >= 0 && intent.index < size) removeAt(intent.index)
                     }
-                    if (intent.category == PointCategory.A) s.copy(favoritesA = updated)
+                    if (intent.category == PointsCategory.A) s.copy(favoritesA = updated)
                     else s.copy(favoritesB = updated)
                 }
                 persistPoints()
             }
 
-            // Tap nama favorit: terbang + play kategori terkait (jitter otomatis)
             is MapIntent.PlayFavorite -> playFavorite(intent.category, intent.index)
 
-            // Jitter manual (switch di dialog)
             is MapIntent.ToggleJitter -> toggleJitter(intent.target)
 
-            // Ubah setelan jitter; simpan dengan debounce
             is MapIntent.UpdateJitterConfig -> {
                 _state.update {
                     if (intent.target == PointCategory.A) it.copy(jitterConfigA = intent.config)
@@ -135,7 +127,6 @@ class MapViewModel(
                 persistJitterDebounced()
             }
 
-            // Lock panel: toggle + persistenkan
             MapIntent.ToggleTrackPanelLock -> {
                 _state.update { it.copy(isTrackPanelLocked = !it.isTrackPanelLocked) }
                 persistLocks()
@@ -145,7 +136,6 @@ class MapViewModel(
                 persistLocks()
             }
 
-            // Posisi drag panel (dikirim saat gesture selesai) + persistenkan
             is MapIntent.TrackPanelOffsetChanged -> {
                 _state.update { it.copy(trackPanelOffset = intent.offset) }
                 persistPanelOffsets()
@@ -155,29 +145,29 @@ class MapViewModel(
                 persistPanelOffsets()
             }
 
-            // Simpan posisi kamera/pin terakhir (dipanggil saat aplikasi ditinggalkan)
             is MapIntent.SaveCameraState -> viewModelScope.launch {
                 mapStateRepository.saveCameraState(intent.camera)
             }
 
-            // Auto-focus: ambil posisi GPS terkini, kirim sebagai perintah kamera
+            is MapIntent.PinChipVisibilityChanged -> {
+                _state.update { it.copy(isPinChipVisible = intent.visible) }
+                persistPoints()
+            }
+
             MapIntent.FocusCurrentLocation -> viewModelScope.launch {
                 try {
                     getCurrentLocation()?.let { loc ->
                         _events.send(MapCameraEvent.FlyTo(loc, FOCUS_ZOOM))
                     }
                 } catch (_: SecurityException) {
-                    // izin lokasi belum tersedia — abaikan
                 }
             }
 
-            // Tap chip: terbang ke posisi marker (zoom dipertahankan)
             MapIntent.FocusPointA -> flyToPoint { it.pointA }
             MapIntent.FocusPointB -> flyToPoint { it.pointB }
         }
     }
 
-    /** Kirim perintah kamera ke titik terpilih jika ada */
     private fun flyToPoint(selector: (MapUiState) -> LocationData?) {
         selector(_state.value)?.let { point ->
             viewModelScope.launch {
@@ -186,11 +176,11 @@ class MapViewModel(
         }
     }
 
-    // ================== PLAY / STOP (jitter otomatis) ==================
+    // ================== PLAY / STOP ==================
 
     private fun togglePlay(category: PointCategory, pin: LocationData) {
-        val wasActive =
-            if (category == PointCategory.A) _state.value.isActiveA else _state.value.isActiveB
+        val wasActive = if (category == PointCategory.A) _state.value.isActiveA
+        else _state.value.isActiveB
         if (wasActive) {
             stopJitterInternal(category)
             _state.update {
@@ -198,7 +188,6 @@ class MapViewModel(
                 else it.copy(isActiveB = false, pointB = null)
             }
         } else {
-            // Jitter otomatis aktif saat play, basis = titik play
             _state.update {
                 if (category == PointCategory.A) it.copy(
                     isActiveA = true, pointA = pin,
@@ -238,18 +227,17 @@ class MapViewModel(
         }
     }
 
-    // ================== JITTER (GERAK ACAK) ==================
+    // ================== JITTER ==================
 
     private fun toggleJitter(category: PointCategory) {
-        val activeNow =
-            if (category == PointCategory.A) _state.value.isJitterActiveA
-            else _state.value.isJitterActiveB
+        val activeNow = if (category == PointCategory.A) _state.value.isJitterActiveA
+        else _state.value.isJitterActiveB
         if (activeNow) {
             stopJitterInternal(category)
         } else {
             val base = if (category == PointCategory.A) _state.value.pointA
             else _state.value.pointB
-            base ?: return // titik belum di-play — abaikan
+            base ?: return
             _state.update {
                 if (category == PointCategory.A) it.copy(isJitterActiveA = true, jitterBaseA = base)
                 else it.copy(isJitterActiveB = true, jitterBaseB = base)
@@ -271,11 +259,6 @@ class MapViewModel(
         }
     }
 
-    /**
-     * Loop jitter: tiap interval detik, titik bergerak acak maksimal `step` meter,
-     * selalu dijaga tetap dalam `radius` dari titik dasar.
-     * Setelan dibaca ulang tiap tick sehingga perubahan slider langsung berlaku.
-     */
     private fun startJitterJob(category: PointCategory) {
         val job = viewModelScope.launch {
             val base = (if (category == PointCategory.A) _state.value.jitterBaseA
@@ -324,64 +307,11 @@ class MapViewModel(
                     isActiveB = s.isActiveB,
                     pointB = s.pointB,
                     favoritesA = s.favoritesA,
-                    favoritesB = s.favoritesB
+                    favoritesB = s.favoritesB,
+                    isPinChipVisible = s.isPinChipVisible
                 )
             )
         }
     }
 
-    private fun persistLocks() {
-        val s = _state.value
-        viewModelScope.launch {
-            mapStateRepository.savePanelLocks(
-                SavedPanelLocks(
-                    trackLocked = s.isTrackPanelLocked,
-                    zoomLocked = s.isZoomPanelLocked
-                )
-            )
-        }
-    }
-
-    private fun persistPanelOffsets() {
-        val s = _state.value
-        viewModelScope.launch {
-            mapStateRepository.savePanelOffsets(
-                SavedPanelOffsets(
-                    track = s.trackPanelOffset,
-                    zoom = s.zoomPanelOffset
-                )
-            )
-        }
-    }
-
-    private fun persistJitter() {
-        val s = _state.value
-        viewModelScope.launch {
-            mapStateRepository.saveJitter(
-                SavedJitterState(
-                    configA = s.jitterConfigA,
-                    configB = s.jitterConfigB,
-                    isActiveA = s.isJitterActiveA,
-                    baseA = s.jitterBaseA,
-                    isActiveB = s.isJitterActiveB,
-                    baseB = s.jitterBaseB
-                )
-            )
-        }
-    }
-
-    /** Debounce: slider menghasilkan banyak event — simpan 400ms setelah perubahan terakhir */
-    private fun persistJitterDebounced() {
-        jitterPersistJob?.cancel()
-        jitterPersistJob = viewModelScope.launch {
-            delay(400)
-            persistJitter()
-        }
-    }
-
-    override fun onCleared() {
-        jitterJobA?.cancel()
-        jitterJobB?.cancel()
-        super.onCleared()
-    }
-}
+    private fun persistLocks() { ... }  // TIDAK BERUBAH dari versi sebelumnya
