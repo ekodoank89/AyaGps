@@ -24,6 +24,7 @@ sealed interface MapCameraEvent {
 /** ===== UI STATE ===== */
 data class MapUiState(
     val hasPermission: Boolean = false,
+    val permissionsFlowDone: Boolean = false,
     val isActiveA: Boolean = false,
     val pointA: LocationData? = null,
     val isActiveB: Boolean = false,
@@ -40,18 +41,20 @@ data class MapUiState(
     val isZoomPanelLocked: Boolean = false,
     val trackPanelOffset: PanelOffset? = null,
     val zoomPanelOffset: PanelOffset? = null,
-    val cameraState: SavedCameraState? = null
+    val cameraState: SavedCameraState? = null,
+    val isPinChipVisible: Boolean = true
 )
 
 /** ===== INTENT ===== */
 sealed interface MapIntent {
     data object PermissionGranted : MapIntent
     data object PermissionDenied : MapIntent
+    data object PermissionsFlowDone : MapIntent
     data class ToggleA(val pinLocation: LocationData) : MapIntent
     data class ToggleB(val pinLocation: LocationData) : MapIntent
     data class SaveFavorite(
         val category: PointCategory,
-        val index: Int?, // null = tambah baru, selain itu = edit pada indeks tsb
+        val index: Int?,
         val name: String,
         val location: LocationData
     ) : MapIntent
@@ -67,4 +70,5 @@ sealed interface MapIntent {
     data class TrackPanelOffsetChanged(val offset: PanelOffset) : MapIntent
     data class ZoomPanelOffsetChanged(val offset: PanelOffset) : MapIntent
     data class SaveCameraState(val camera: SavedCameraState) : MapIntent
+    data class PinChipVisibilityChanged(val visible: Boolean) : MapIntent
 }
